@@ -13,13 +13,23 @@ export interface Conversation {
   updatedAt: number;
 }
 
-export type LLMModel = 'Claude 3 Opus' | 'Claude 3 Sonnet' | 'Claude 3 Haiku' | 'GPT-4o' | 'GPT-4' | 'GPT-3.5';
+export type LLMModel = string;
+
+export interface LLMOption {
+  id: string;
+  name: string;
+  provider: 'OpenAI' | 'Anthropic' | 'Google' | 'Mistral' | 'Other';
+  description?: string;
+  apiKeyRequired?: boolean;
+  isCustom?: boolean;
+}
 
 export interface ChatContextType {
   conversations: Conversation[];
   currentConversationId: string | null;
   isLoading: boolean;
   currentLLM: LLMModel;
+  llmOptions: LLMOption[];
   createNewConversation: () => void;
   switchConversation: (id: string) => void;
   sendMessage: (content: string) => void;
@@ -27,4 +37,7 @@ export interface ChatContextType {
   clearConversations: () => void;
   updateConversationTitle: (id: string, newTitle: string) => void;
   setLLM: (model: LLMModel) => void;
+  addLLMOption: (option: Omit<LLMOption, 'id'>) => void;
+  editLLMOption: (id: string, updates: Partial<Omit<LLMOption, 'id'>>) => void;
+  deleteLLMOption: (id: string) => void;
 } 

@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, FlatList, Text, TouchableOpacity, useWindowDimensions, Animated, Easing, Platform, Image, Modal, ScrollView, TextInput, Dimensions, Pressable, Switch, TouchableWithoutFeedback } from 'react-native';
-import { IconButton, Menu, Button, Avatar, Divider } from 'react-native-paper';
+import { View, StyleSheet, FlatList, Text, TouchableOpacity, useWindowDimensions, Animated, Easing, Platform, Image, Modal as RNModal, ScrollView, TextInput as RNTextInput, Dimensions, Pressable, Switch, TouchableWithoutFeedback } from 'react-native';
+import { IconButton, Menu, Button, Avatar, Divider, Modal, Portal, TextInput } from 'react-native-paper';
 import { useChat } from '../context/ChatContext';
 import { useTheme } from '../context/ThemeContext';
 import MessageItem from '../components/MessageItem';
 import ChatInput from '../components/ChatInput';
 import LoadingAnimation from '../components/LoadingAnimation';
 import ConversationList from '../components/ConversationList';
-import { LLMModel } from '../types';
+import { LLMModel, LLMOption } from '../types';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const EXPANDED_WIDTH = 300;
 const COLLAPSED_WIDTH = 60;
@@ -51,6 +52,10 @@ type SettingsPanelProps = {
   setLlmMenuVisible: (visible: boolean) => void;
   llmMenuVisible: boolean;
   toggleTheme: () => void;
+  llmOptions: LLMOption[];
+  addLLMOption: (option: Omit<LLMOption, 'id'>) => void;
+  editLLMOption: (id: string, updates: Partial<Omit<LLMOption, 'id'>>) => void;
+  deleteLLMOption: (id: string) => void;
 };
 
 // Create animation value outside component to prevent re-initialization
@@ -70,7 +75,11 @@ const SettingsPanel = (props: SettingsPanelProps) => {
     setLLM,
     setLlmMenuVisible,
     llmMenuVisible,
-    toggleTheme
+    toggleTheme,
+    llmOptions,
+    addLLMOption,
+    editLLMOption,
+    deleteLLMOption
   } = props;
   
   // Animation setup
@@ -122,6 +131,15 @@ const SettingsPanel = (props: SettingsPanelProps) => {
   const [showGoogleKey, setShowGoogleKey] = useState(false);
   const [showMistralKey, setShowMistralKey] = useState(false);
   const [keysSaved, setKeysSaved] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState('You are a helpful assistant named bubl.');
+  
+  // Add state for LLM management
+  const [editingLLM, setEditingLLM] = useState<LLMOption | null>(null);
+  const [isAddingLLM, setIsAddingLLM] = useState(false);
+  const [newLLMName, setNewLLMName] = useState('');
+  const [newLLMProvider, setNewLLMProvider] = useState<'OpenAI' | 'Anthropic' | 'Google' | 'Mistral' | 'Other'>('Other');
+  const [newLLMDescription, setNewLLMDescription] = useState('');
+  const [showProviderDropdown, setShowProviderDropdown] = useState(false);
   
   // Function to handle saving API keys
   const saveApiKeys = () => {
@@ -201,264 +219,522 @@ const SettingsPanel = (props: SettingsPanelProps) => {
         
       case 'ai-config':
         return (
-          <View style={[styles.settingsSection, { minHeight: 500 }]}>
-            <Text style={[
-              styles.settingsSectionTitle, 
-              { color: isDark ? '#e5e7eb' : '#333' }
-            ]}>LLM Configuration</Text>
+          <View style={{ minHeight: 500 }}>
+            <Text style={[styles.settingsSectionTitle, isDark && { color: '#e5e7eb' }]}>
+              AI Configuration
+            </Text>
             
-            {/* LLM Selection with Portal-style dropdown */}
-            <View style={styles.settingsRow}>
-              <Text style={[
-                styles.settingLabel, 
-                { color: isDark ? '#e5e7eb' : '#333' }
-              ]}>LLM Selection</Text>
-              
-              <View style={{ position: 'relative', zIndex: 100 }}>
-                <Button 
-                  mode="outlined" 
-                  style={[
-                    styles.settingButton,
-                    { 
-                      backgroundColor: isDark 
-                        ? 'rgba(84, 198, 235, 0.1)' 
-                        : 'rgba(84, 198, 235, 0.05)'
-                    },
-                    isDark && { borderColor: darkTheme.primaryLight },
-                    { borderRadius: 16 } // Slightly more rounded corners
-                  ]}
-                  labelStyle={[
-                    styles.settingButtonLabel,
-                    isDark && { color: darkTheme.text }
-                  ]}
-                  onPress={() => {
-                    console.log('[LLM-MENU] Button pressed, toggling menu');
-                    setLlmMenuVisible(!llmMenuVisible);
-                  }}
-                  contentStyle={{
-                    flexDirection: 'row-reverse',
-                    paddingVertical: 3
-                  }}
-                  icon={() => (
-                    <Ionicons 
-                      name="chevron-down" 
-                      size={18} 
-                      color={isDark ? darkTheme.text : '#54C6EB'} 
-                      style={{ marginLeft: 8, marginRight: -4 }}
-                    />
-                  )}
-                >
-                  {currentLLM}
-                </Button>
-              </View>
-            </View>
-            
-            <View style={styles.settingsRow}>
-              <Text style={[
-                styles.settingLabel, 
-                { color: isDark ? '#e5e7eb' : '#333' }
-              ]}>System Prompt</Text>
-              <TextInput
-                style={[
-                  styles.textAreaInput,
-                  isDark && {
-                    backgroundColor: darkTheme.surfaceElevated,
-                    borderColor: darkTheme.borderLight,
-                    color: darkTheme.text,
-                  }
-                ]}
-                multiline
-                numberOfLines={4}
-                placeholder="Enter system prompt here..."
-                placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
-                defaultValue="You are a helpful assistant named bubl."
-              />
-            </View>
-            
-            {/* API Keys Section with improved layout */}
-            <View style={styles.settingsRow}>
-              <Text style={[
-                styles.settingsSectionTitle, 
-                { color: isDark ? '#e5e7eb' : '#333', marginBottom: 16 }
-              ]}>API Keys</Text>
-              
-              <Text style={[
-                styles.settingDescription,
-                { color: isDark ? darkTheme.textSecondary : '#6b7280', marginBottom: 16 }
-              ]}>
-                Enter your API keys to connect to various LLM providers.
+            {/* Model Selection Section */}
+            <View style={styles.settingsSection}>
+              <Text style={[styles.settingsSectionTitle, isDark && { color: '#e5e7eb' }]}>
+                Model Selection
+              </Text>
+              <Text style={[styles.settingDescription, isDark && { color: '#9ca3af' }]}>
+                Select which LLM you want to use for generating responses.
               </Text>
               
-              {/* OpenAI API Key */}
-              <View style={styles.apiKeyContainer}>
-                <Text style={[
-                  styles.settingLabel, 
-                  { color: isDark ? '#e5e7eb' : '#333', marginBottom: 8 }
-                ]}>OpenAI API Key</Text>
-                <View style={styles.apiKeyInputContainer}>
-                  <TextInput
+              <View style={styles.settingsRow}>
+                <Text style={[styles.settingLabel, isDark && { color: '#e5e7eb' }]}>Active LLM</Text>
+                <View style={{ position: 'relative' }}>
+                  <TouchableOpacity
+                    onPress={() => setLlmMenuVisible(!llmMenuVisible)}
                     style={[
-                      styles.apiKeyInput,
-                      isDark && {
-                        backgroundColor: darkTheme.surfaceElevated,
-                        borderColor: darkTheme.borderLight,
-                        color: darkTheme.text,
-                      }
+                      styles.llmSelectorButton,
+                      isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight },
                     ]}
-                    value={openaiKey}
-                    onChangeText={setOpenaiKey}
-                    placeholder="sk-..."
-                    placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
-                    secureTextEntry={!showOpenaiKey}
-                  />
-                  <TouchableOpacity 
-                    style={styles.apiKeyVisibilityButton}
-                    onPress={() => setShowOpenaiKey(!showOpenaiKey)}
                   >
-                    <Ionicons 
-                      name={showOpenaiKey ? "eye-off" : "eye"} 
-                      size={22} 
-                      color={isDark ? darkTheme.textSecondary : '#6b7280'} 
+                    <Text style={[styles.llmButtonText, isDark && { color: darkTheme.text }]}>
+                      {currentLLM}
+                    </Text>
+                    <Ionicons
+                      name="chevron-down"
+                      size={16}
+                      color={isDark ? '#e5e7eb' : '#333'}
+                      style={{ marginLeft: 8 }}
                     />
                   </TouchableOpacity>
+                  
+                  {llmMenuVisible && (
+                    <View style={[
+                      styles.llmDropdownContainer,
+                      isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight },
+                    ]}>
+                      {llmOptions.length > 0 ? (
+                        llmOptions.map((option) => (
+                          <TouchableOpacity
+                            key={option.id}
+                            style={[
+                              styles.dropdownItem,
+                              currentLLM === option.name && { backgroundColor: isDark ? 'rgba(84, 198, 235, 0.2)' : '#e6f7ff' },
+                            ]}
+                            onPress={() => handleLLMSelection(option.name)}
+                          >
+                            <Text style={[styles.dropdownText, isDark && { color: darkTheme.text }]}>
+                              {option.name}
+                            </Text>
+                            {option.description && (
+                              <Text style={[styles.dropdownDescription, isDark && { color: darkTheme.textSecondary }]}>
+                                {option.description}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        ))
+                      ) : (
+                        <View style={styles.dropdownItem}>
+                          <Text style={[styles.dropdownText, isDark && { color: darkTheme.text }]}>
+                            No models available
+                          </Text>
+                          <Text style={[styles.dropdownDescription, isDark && { color: darkTheme.textSecondary }]}>
+                            Add a new model below
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
                 </View>
               </View>
+            </View>
+            
+            {/* LLM Management Section */}
+            <View style={styles.settingsSection}>
+              <Text style={[styles.settingsSectionTitle, isDark && { color: '#e5e7eb' }]}>
+                Manage LLM Options
+              </Text>
+              <Text style={[styles.settingDescription, isDark && { color: '#9ca3af' }]}>
+                Add, edit, or remove LLM options.
+              </Text>
               
-              {/* Anthropic API Key */}
-              <View style={styles.apiKeyContainer}>
-                <Text style={[
-                  styles.settingLabel, 
-                  { color: isDark ? '#e5e7eb' : '#333', marginBottom: 8 }
-                ]}>Anthropic API Key</Text>
-                <View style={styles.apiKeyInputContainer}>
-                  <TextInput
-                    style={[
-                      styles.apiKeyInput,
-                      isDark && {
-                        backgroundColor: darkTheme.surfaceElevated,
-                        borderColor: darkTheme.borderLight,
-                        color: darkTheme.text,
-                      }
-                    ]}
-                    value={anthropicKey}
-                    onChangeText={setAnthropicKey}
-                    placeholder="sk_ant-..."
-                    placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
-                    secureTextEntry={!showAnthropicKey}
-                  />
-                  <TouchableOpacity 
-                    style={styles.apiKeyVisibilityButton}
-                    onPress={() => setShowAnthropicKey(!showAnthropicKey)}
-                  >
-                    <Ionicons 
-                      name={showAnthropicKey ? "eye-off" : "eye"} 
-                      size={22} 
-                      color={isDark ? darkTheme.textSecondary : '#6b7280'} 
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              
-              {/* Google API Key */}
-              <View style={styles.apiKeyContainer}>
-                <Text style={[
-                  styles.settingLabel, 
-                  { color: isDark ? '#e5e7eb' : '#333', marginBottom: 8 }
-                ]}>Google AI API Key</Text>
-                <View style={styles.apiKeyInputContainer}>
-                  <TextInput
-                    style={[
-                      styles.apiKeyInput,
-                      isDark && {
-                        backgroundColor: darkTheme.surfaceElevated,
-                        borderColor: darkTheme.borderLight,
-                        color: darkTheme.text,
-                      }
-                    ]}
-                    value={googleKey}
-                    onChangeText={setGoogleKey}
-                    placeholder="AIza..."
-                    placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
-                    secureTextEntry={!showGoogleKey}
-                  />
-                  <TouchableOpacity 
-                    style={styles.apiKeyVisibilityButton}
-                    onPress={() => setShowGoogleKey(!showGoogleKey)}
-                  >
-                    <Ionicons 
-                      name={showGoogleKey ? "eye-off" : "eye"} 
-                      size={22} 
-                      color={isDark ? darkTheme.textSecondary : '#6b7280'} 
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              
-              {/* Mistral API Key */}
-              <View style={[styles.apiKeyContainer, { marginBottom: 20 }]}>
-                <Text style={[
-                  styles.settingLabel, 
-                  { color: isDark ? '#e5e7eb' : '#333', marginBottom: 8 }
-                ]}>Mistral API Key</Text>
-                <View style={styles.apiKeyInputContainer}>
-                  <TextInput
-                    style={[
-                      styles.apiKeyInput,
-                      isDark && {
-                        backgroundColor: darkTheme.surfaceElevated,
-                        borderColor: darkTheme.borderLight,
-                        color: darkTheme.text,
-                      }
-                    ]}
-                    value={mistralKey}
-                    onChangeText={setMistralKey}
-                    placeholder="..."
-                    placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
-                    secureTextEntry={!showMistralKey}
-                  />
-                  <TouchableOpacity 
-                    style={styles.apiKeyVisibilityButton}
-                    onPress={() => setShowMistralKey(!showMistralKey)}
-                  >
-                    <Ionicons 
-                      name={showMistralKey ? "eye-off" : "eye"} 
-                      size={22} 
-                      color={isDark ? darkTheme.textSecondary : '#6b7280'} 
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              
-              {/* Save button */}
-              <View style={styles.apiKeySaveContainer}>
-                <Button 
-                  mode="contained" 
-                  style={[
-                    styles.apiKeySaveButton,
-                    isDark && { backgroundColor: darkTheme.primary }
-                  ]}
-                  labelStyle={[
-                    styles.apiKeySaveButtonLabel,
-                    isDark && { color: darkTheme.surfaceElevated }
-                  ]}
-                  onPress={saveApiKeys}
-                >
-                  Save API Keys
-                </Button>
-                
-                {keysSaved && (
-                  <View style={styles.keySavedIndicator}>
-                    <Ionicons 
-                      name="checkmark-circle" 
-                      size={18} 
-                      color="#10b981" 
-                      style={{ marginRight: 5 }}
-                    />
-                    <Text style={styles.keySavedText}>Keys saved successfully!</Text>
+              {/* List of LLM options */}
+              <View style={{ marginVertical: 16 }}>
+                {llmOptions.length > 0 ? (
+                  llmOptions.map((option) => (
+                    <View 
+                      key={option.id} 
+                      style={[
+                        styles.llmOptionItem,
+                        isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.llmOptionName, isDark && { color: darkTheme.text }]}>
+                          {option.name}
+                        </Text>
+                        {option.description && (
+                          <Text style={[styles.llmOptionDescription, isDark && { color: darkTheme.textSecondary }]}>
+                            {option.description}
+                          </Text>
+                        )}
+                        <Text style={[styles.llmOptionProvider, isDark && { color: darkTheme.textTertiary }]}>
+                          Provider: {option.provider}
+                        </Text>
+                      </View>
+                      
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={[
+                            styles.iconButton,
+                            isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight },
+                          ]}
+                          onPress={() => {
+                            setEditingLLM(option);
+                            setNewLLMName(option.name);
+                            setNewLLMProvider(option.provider);
+                            setNewLLMDescription(option.description || '');
+                          }}
+                        >
+                          <Ionicons name="pencil" size={16} color={isDark ? '#e5e7eb' : '#333'} />
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          style={[
+                            styles.iconButton,
+                            isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight },
+                          ]}
+                          onPress={() => {
+                            // Confirm before deleting
+                            if (confirm(`Are you sure you want to delete ${option.name}?`)) {
+                              deleteLLMOption(option.id);
+                            }
+                          }}
+                        >
+                          <Ionicons name="trash" size={16} color="#ef4444" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))
+                ) : (
+                  <View style={[
+                    styles.llmOptionItem,
+                    isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight },
+                    { justifyContent: 'center', alignItems: 'center', padding: 24 }
+                  ]}>
+                    <Text style={[styles.llmOptionName, isDark && { color: darkTheme.text }]}>
+                      No LLM models configured
+                    </Text>
+                    <Text style={[styles.llmOptionDescription, isDark && { color: darkTheme.textSecondary }, { textAlign: 'center', marginTop: 8 }]}>
+                      Add a new model using the button below
+                    </Text>
                   </View>
                 )}
               </View>
+              
+              {/* Add LLM button */}
+              <Button
+                mode="contained"
+                onPress={() => setIsAddingLLM(true)}
+                style={[
+                  styles.addLLMButton,
+                  isDark && { backgroundColor: '#54C6EB' },
+                ]}
+                icon="plus"
+              >
+                Add New LLM
+              </Button>
+              
+              {/* Add Reset to Default button */}
+              <Button
+                mode="outlined"
+                onPress={() => {
+                  // Show confirmation dialog
+                  if (confirm('This will reset all LLM options to default. Customizations will be lost. Continue?')) {
+                    // Clear the stored LLM options by setting an empty array
+                    // The app will load defaults on next startup
+                    AsyncStorage.setItem('llmOptions', JSON.stringify([]));
+                    // Reload the page to apply changes
+                    if (typeof window !== 'undefined') {
+                      window.location.reload();
+                    }
+                  }
+                }}
+                style={{
+                  borderRadius: 12,
+                  marginTop: 12,
+                  borderColor: isDark ? darkTheme.border : '#e5e7eb',
+                }}
+                icon="refresh"
+              >
+                Reset to Default LLMs
+              </Button>
             </View>
+            
+            {/* API Keys Section */}
+            <View style={[styles.settingsSection, { marginBottom: 40 }]}>
+              <Text style={[styles.settingsSectionTitle, isDark && { color: '#e5e7eb' }]}>
+                API Keys
+              </Text>
+              <Text style={[styles.settingDescription, isDark && { color: '#9ca3af' }]}>
+                Enter your API keys to use with different LLM providers.
+              </Text>
+              
+              <View style={styles.settingsRow}>
+                <View style={styles.apiKeyContainer}>
+                  <Text style={[styles.settingLabel, isDark && { color: '#e5e7eb' }]}>OpenAI API Key</Text>
+                  <TextInput
+                    value={openaiKey}
+                    onChangeText={setOpenaiKey}
+                    placeholder="Enter OpenAI API key"
+                    secureTextEntry
+                    style={[
+                      styles.apiKeyInput,
+                      isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight, color: darkTheme.text },
+                    ]}
+                    placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
+                  />
+                </View>
+              </View>
+              
+              <View style={styles.settingsRow}>
+                <View style={styles.apiKeyContainer}>
+                  <Text style={[styles.settingLabel, isDark && { color: '#e5e7eb' }]}>Anthropic API Key</Text>
+                  <TextInput
+                    value={anthropicKey}
+                    onChangeText={setAnthropicKey}
+                    placeholder="Enter Anthropic API key"
+                    secureTextEntry
+                    style={[
+                      styles.apiKeyInput,
+                      isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight, color: darkTheme.text },
+                    ]}
+                    placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
+                  />
+                </View>
+              </View>
+              
+              <View style={styles.settingsRow}>
+                <View style={styles.apiKeyContainer}>
+                  <Text style={[styles.settingLabel, isDark && { color: '#e5e7eb' }]}>Mistral API Key</Text>
+                  <TextInput
+                    value={mistralKey}
+                    onChangeText={setMistralKey}
+                    placeholder="Enter Mistral API key"
+                    secureTextEntry
+                    style={[
+                      styles.apiKeyInput,
+                      isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight, color: darkTheme.text },
+                    ]}
+                    placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
+                  />
+                </View>
+              </View>
+              
+              <View style={styles.apiKeySaveContainer}>
+                <Button
+                  mode="contained"
+                  onPress={saveApiKeys}
+                  style={{ backgroundColor: '#54C6EB', borderRadius: 12 }}
+                >
+                  Save API Keys
+                </Button>
+              </View>
+            </View>
+
+            {/* System Prompt */}
+            <View style={styles.settingsSection}>
+              <Text style={[styles.settingsSectionTitle, isDark && { color: '#e5e7eb' }]}>
+                System Prompt
+              </Text>
+              <Text style={[styles.settingDescription, isDark && { color: '#9ca3af' }]}>
+                Customize the system prompt used for all conversations.
+              </Text>
+              
+              <View style={styles.settingsRow}>
+                <TextInput
+                  value={systemPrompt}
+                  onChangeText={setSystemPrompt}
+                  style={[
+                    styles.apiKeyInput,
+                    { minHeight: 100 },
+                    isDark && { backgroundColor: darkTheme.surfaceElevated, borderColor: darkTheme.borderLight, color: darkTheme.text },
+                  ]}
+                  placeholder="Enter system prompt"
+                  placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
+                  multiline
+                />
+              </View>
+              
+              <View style={{ alignItems: 'flex-end', marginTop: 16 }}>
+                <Button
+                  mode="contained"
+                  onPress={saveApiKeys} // We'll use the same function to save system prompt
+                  style={{ backgroundColor: '#54C6EB', borderRadius: 12 }}
+                >
+                  Save System Prompt
+                </Button>
+              </View>
+            </View>
+            
+            {/* Render the LLM modal if adding or editing */}
+            {isAddingLLM || editingLLM !== null ? (
+              <Modal
+                visible={isAddingLLM || editingLLM !== null}
+                onDismiss={() => {
+                  setEditingLLM(null);
+                  setIsAddingLLM(false);
+                  setNewLLMName('');
+                  setNewLLMProvider('Other');
+                  setNewLLMDescription('');
+                }}
+                contentContainerStyle={[
+                  {
+                    backgroundColor: isDark ? darkTheme.surfaceElevated : 'white',
+                    borderRadius: 24,
+                    padding: 28,
+                    margin: 20,
+                    maxWidth: 500,
+                    width: '90%',
+                    alignSelf: 'center',
+                  }
+                ]}
+              >
+                <View>
+                  <Text style={[
+                    styles.settingsSectionTitle,
+                    { marginBottom: 24, color: isDark ? '#e5e7eb' : '#333' }
+                  ]}>{editingLLM !== null ? 'Edit LLM' : 'Add New LLM'}</Text>
+                  
+                  <View style={{ marginBottom: 20 }}>
+                    <Text style={[
+                      styles.settingLabel,
+                      { color: isDark ? '#e5e7eb' : '#333', marginBottom: 8 }
+                    ]}>LLM Name</Text>
+                    <TextInput
+                      value={newLLMName}
+                      onChangeText={setNewLLMName}
+                      style={[
+                        styles.apiKeyInput,
+                        isDark && {
+                          backgroundColor: darkTheme.surfaceElevated,
+                          borderColor: darkTheme.borderLight,
+                          color: darkTheme.text,
+                        }
+                      ]}
+                      placeholder="Enter LLM name"
+                      placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
+                    />
+                  </View>
+                  
+                  <View style={{ marginBottom: 20 }}>
+                    <Text style={[
+                      styles.settingLabel,
+                      { color: isDark ? '#e5e7eb' : '#333', marginBottom: 8 }
+                    ]}>Provider</Text>
+                    
+                    <View style={{ position: 'relative' }}>
+                      <Button
+                        mode="outlined"
+                        onPress={() => setShowProviderDropdown(!showProviderDropdown)}
+                        style={[
+                          styles.apiKeyInput,
+                          { justifyContent: 'space-between', alignItems: 'center', flexDirection: 'row' },
+                          isDark && {
+                            backgroundColor: darkTheme.surfaceElevated,
+                            borderColor: darkTheme.borderLight,
+                          }
+                        ]}
+                        contentStyle={{ flexDirection: 'row-reverse' }}
+                        icon={() => (
+                          <Ionicons
+                            name="chevron-down"
+                            size={16}
+                            color={isDark ? darkTheme.text : '#333'}
+                          />
+                        )}
+                      >
+                        {newLLMProvider}
+                      </Button>
+                      
+                      {showProviderDropdown && (
+                        <View style={[
+                          {
+                            position: 'absolute',
+                            top: 60,
+                            left: 0,
+                            right: 0,
+                            backgroundColor: isDark ? darkTheme.surfaceElevated : 'white',
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: isDark ? darkTheme.border : '#e5e7eb',
+                            zIndex: 1000,
+                            elevation: 5,
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 2 },
+                            shadowOpacity: 0.2,
+                            shadowRadius: 3,
+                            padding: 5,
+                          }
+                        ]}>
+                          {(['OpenAI', 'Anthropic', 'Google', 'Mistral', 'Other'] as const).map(provider => (
+                            <TouchableOpacity
+                              key={provider}
+                              style={[
+                                {
+                                  padding: 12,
+                                  borderRadius: 8,
+                                  marginVertical: 2,
+                                },
+                                newLLMProvider === provider && {
+                                  backgroundColor: isDark ? 'rgba(84, 198, 235, 0.2)' : '#e6f7ff',
+                                }
+                              ]}
+                              onPress={() => {
+                                setNewLLMProvider(provider);
+                                setShowProviderDropdown(false);
+                              }}
+                            >
+                              <Text style={{ color: isDark ? darkTheme.text : '#333' }}>
+                                {provider}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  
+                  <View style={{ marginBottom: 24 }}>
+                    <Text style={[
+                      styles.settingLabel,
+                      { color: isDark ? '#e5e7eb' : '#333', marginBottom: 8 }
+                    ]}>Description (Optional)</Text>
+                    <TextInput
+                      value={newLLMDescription}
+                      onChangeText={setNewLLMDescription}
+                      style={[
+                        styles.textAreaInput,
+                        { minHeight: 80 },
+                        isDark && {
+                          backgroundColor: darkTheme.surfaceElevated,
+                          borderColor: darkTheme.borderLight,
+                          color: darkTheme.text,
+                        }
+                      ]}
+                      placeholder="Enter a short description"
+                      placeholderTextColor={isDark ? darkTheme.textTertiary : '#9ca3af'}
+                      multiline
+                    />
+                  </View>
+                  
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
+                    <Button
+                      mode="outlined"
+                      onPress={() => {
+                        setEditingLLM(null);
+                        setIsAddingLLM(false);
+                        setNewLLMName('');
+                        setNewLLMProvider('Other');
+                        setNewLLMDescription('');
+                      }}
+                      style={[
+                        {
+                          borderColor: isDark ? darkTheme.border : '#e5e7eb',
+                          borderRadius: 12,
+                        }
+                      ]}
+                    >
+                      Cancel
+                    </Button>
+                    
+                    <Button
+                      mode="contained"
+                      onPress={() => {
+                        if (editingLLM !== null) {
+                          // Editing existing LLM
+                          editLLMOption(editingLLM.id, {
+                            name: newLLMName,
+                            provider: newLLMProvider,
+                            description: newLLMDescription,
+                          });
+                        } else {
+                          // Adding new LLM
+                          addLLMOption({
+                            name: newLLMName,
+                            provider: newLLMProvider,
+                            description: newLLMDescription,
+                            apiKeyRequired: true,
+                          });
+                        }
+                        
+                        // Reset state and close modal
+                        setEditingLLM(null);
+                        setIsAddingLLM(false);
+                        setNewLLMName('');
+                        setNewLLMProvider('Other');
+                        setNewLLMDescription('');
+                      }}
+                      style={[
+                        {
+                          backgroundColor: '#54C6EB',
+                          borderRadius: 12,
+                        }
+                      ]}
+                      disabled={!newLLMName.trim()}
+                    >
+                      {editingLLM !== null ? 'Update' : 'Add'}
+                    </Button>
+                  </View>
+                </View>
+              </Modal>
+            ) : null}
           </View>
         );
         
@@ -540,12 +816,12 @@ const SettingsPanel = (props: SettingsPanelProps) => {
   if (!visible) return null;
   
   return (
-    <Modal
+    <RNModal
       visible={visible}
-      transparent={true}
       animationType="none"
       onRequestClose={onClose}
       supportedOrientations={['portrait', 'landscape']}
+      transparent
     >
       <Animated.View 
         style={[
@@ -872,7 +1148,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
           </View>
         )}
       </Animated.View>
-    </Modal>
+    </RNModal>
   );
 };
 
@@ -888,12 +1164,34 @@ const ChatScreen: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentMessage, setCurrentMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [currentLLM, setLLM] = useState<LLMModel>('Claude 3 Sonnet');
+  
+  // Get LLM options from ChatContext
+  const { 
+    currentConversationId, 
+    conversations, 
+    isLoading, 
+    currentLLM: contextLLM, 
+    setLLM: setContextLLM,
+    llmOptions, 
+    addLLMOption, 
+    editLLMOption, 
+    deleteLLMOption, 
+    createNewConversation, 
+    updateConversationTitle 
+  } = useChat();
+  
+  const [currentLLM, setCurrentLLM] = useState<LLMModel>(contextLLM || 'Claude 3 Sonnet');
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [buttonPosition, setButtonPosition] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const [llmMenuVisible, setLlmMenuVisible] = useState(false);
+  
+  // Set LLM function to update both the local state and context
+  const setLLM = (model: LLMModel) => {
+    setCurrentLLM(model);
+    setContextLLM(model);
+  };
   
   // Theme
   const [isDark, setIsDark] = useState(false);
@@ -904,8 +1202,6 @@ const ChatScreen: React.FC = () => {
   
   // ScrollView ref
   const scrollViewRef = useRef<ScrollView>(null);
-  
-  const { currentConversationId, conversations, isLoading, createNewConversation, updateConversationTitle } = useChat();
   
   // State for account menu dropdown
   const [accountMenuVisible, setAccountMenuVisible] = useState(false);
@@ -951,7 +1247,7 @@ const ChatScreen: React.FC = () => {
   // Handle LLM selection in the ChatScreen component
   const handleLLMSelection = (model: LLMModel) => {
     console.log(`[LLM] Selected model: ${model}`);
-    setLLM(model);
+    setCurrentLLM(model);
     // Provide visual feedback by briefly highlighting the selected item
     setSelectedItem(model);
     
@@ -1293,11 +1589,11 @@ const ChatScreen: React.FC = () => {
     }, [profileVisible]);
     
     return (
-      <Modal
-        transparent
+      <RNModal
         visible={profileVisible}
         onRequestClose={() => setProfileVisible(false)}
         animationType="none"
+        transparent
       >
         <Animated.View 
           style={[
@@ -1471,7 +1767,7 @@ const ChatScreen: React.FC = () => {
             </Animated.View>
           </TouchableOpacity>
         </Animated.View>
-      </Modal>
+      </RNModal>
     );
   };
   
@@ -1646,6 +1942,10 @@ const ChatScreen: React.FC = () => {
         setLlmMenuVisible={setLlmMenuVisible}
         llmMenuVisible={llmMenuVisible}
         toggleTheme={toggleTheme}
+        llmOptions={llmOptions}
+        addLLMOption={addLLMOption}
+        editLLMOption={editLLMOption}
+        deleteLLMOption={deleteLLMOption}
       />
       
       {/* Profile Panel */}
@@ -2614,6 +2914,105 @@ const styles = StyleSheet.create({
   keySavedText: {
     color: '#10b981',
     fontSize: 14,
+    fontWeight: '500',
+  },
+  addLLMButton: {
+    borderRadius: 12,
+    marginTop: 16,
+    backgroundColor: '#54C6EB',
+  },
+  llmOptionItem: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  llmOptionName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  llmOptionDescription: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  llmOptionProvider: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  iconButton: {
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+  },
+  llmDropdownContainer: {
+    position: 'absolute',
+    top: 50,
+    right: 0,
+    width: 280,
+    maxHeight: 300,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    zIndex: 1000,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    padding: 5,
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    padding: 12,
+    borderRadius: 8,
+    marginVertical: 2,
+  },
+  dropdownText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#333',
+  },
+  dropdownDescription: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  llmSelectorButton: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  llmButtonText: {
+    color: '#333',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  defaultModelBadge: {
+    backgroundColor: '#eef2ff',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  defaultModelText: {
+    fontSize: 10,
+    color: '#4f46e5',
     fontWeight: '500',
   },
 });

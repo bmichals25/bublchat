@@ -1,9 +1,58 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Conversation, ChatContextType, Message, LLMModel } from '../types';
+import { Conversation, ChatContextType, Message, LLMModel, LLMOption } from '../types';
 import { generateId, createNewConversationTitle } from '../utils/helpers';
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
+
+// Move the DEFAULT_LLM_OPTIONS to outside the component to prevent recreation
+// Near the top of the file, just after the ChatContext declaration, but before the component
+
+// Default LLM options
+const DEFAULT_LLM_OPTIONS: LLMOption[] = [
+  {
+    id: 'claude-opus',
+    name: 'Claude 3 Opus',
+    provider: 'Anthropic',
+    description: 'Most powerful Claude model for complex tasks',
+    apiKeyRequired: true,
+  },
+  {
+    id: 'claude-sonnet',
+    name: 'Claude 3 Sonnet',
+    provider: 'Anthropic',
+    description: 'Balanced performance and efficiency',
+    apiKeyRequired: true,
+  },
+  {
+    id: 'claude-haiku',
+    name: 'Claude 3 Haiku',
+    provider: 'Anthropic',
+    description: 'Fastest Claude model',
+    apiKeyRequired: true,
+  },
+  {
+    id: 'gpt-4o',
+    name: 'GPT-4o',
+    provider: 'OpenAI',
+    description: 'Latest and most capable GPT model',
+    apiKeyRequired: true,
+  },
+  {
+    id: 'gpt-4',
+    name: 'GPT-4',
+    provider: 'OpenAI',
+    description: 'Powerful reasoning capabilities',
+    apiKeyRequired: true,
+  },
+  {
+    id: 'gpt-3.5',
+    name: 'GPT-3.5',
+    provider: 'OpenAI',
+    description: 'Fast and cost-effective',
+    apiKeyRequired: true,
+  },
+];
 
 // Mock AI response function
 const getMockResponse = (message: string): string => {
@@ -23,6 +72,7 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentLLM, setCurrentLLM] = useState<LLMModel>('Claude 3 Opus');
+  const [llmOptions, setLlmOptions] = useState<LLMOption[]>(DEFAULT_LLM_OPTIONS);
 
   // Load conversations and settings from AsyncStorage on initial load
   useEffect(() => {
@@ -31,6 +81,7 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         const storedConversations = await AsyncStorage.getItem('conversations');
         const storedCurrentId = await AsyncStorage.getItem('currentConversationId');
         const storedLLM = await AsyncStorage.getItem('currentLLM');
+        const storedLlmOptions = await AsyncStorage.getItem('llmOptions');
         
         if (storedConversations) {
           setConversations(JSON.parse(storedConversations));
@@ -42,6 +93,23 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
 
         if (storedLLM) {
           setCurrentLLM(JSON.parse(storedLLM) as LLMModel);
+        }
+        
+        // Handle LLM options loading
+        if (storedLlmOptions) {
+          try {
+            const parsedOptions = JSON.parse(storedLlmOptions);
+            // Always use stored options, even if array is empty
+            // This ensures deleted models stay deleted
+            setLlmOptions(parsedOptions);
+          } catch (e) {
+            console.error('Error parsing stored LLM options:', e);
+            // Only use defaults on parsing error
+            setLlmOptions(DEFAULT_LLM_OPTIONS);
+          }
+        } else {
+          // First time loading (no saved options yet) - use defaults
+          setLlmOptions(DEFAULT_LLM_OPTIONS);
         }
       } catch (error) {
         console.error('Failed to load data:', error);
@@ -80,6 +148,19 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
     
     saveLLM();
   }, [currentLLM]);
+  
+  // Save LLM options to AsyncStorage when they change
+  useEffect(() => {
+    const saveLlmOptions = async () => {
+      try {
+        await AsyncStorage.setItem('llmOptions', JSON.stringify(llmOptions));
+      } catch (error) {
+        console.error('Failed to save LLM options:', error);
+      }
+    };
+    
+    saveLlmOptions();
+  }, [llmOptions]);
 
   const createNewConversation = () => {
     const newId = generateId();
@@ -101,6 +182,55 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
 
   const setLLM = (model: LLMModel) => {
     setCurrentLLM(model);
+  };
+  
+  // Add a new LLM option
+  const addLLMOption = (option: Omit<LLMOption, 'id'>) => {
+    const newOption: LLMOption = {
+      ...option,
+      id: generateId(),
+      isCustom: true
+    };
+    
+    setLlmOptions([...llmOptions, newOption]);
+  };
+  
+  // Edit an existing LLM option
+  const editLLMOption = (id: string, updates: Partial<Omit<LLMOption, 'id'>>) => {
+    setLlmOptions(prevOptions => 
+      prevOptions.map(option => 
+        option.id === id
+          ? { ...option, ...updates }
+          : option
+      )
+    );
+    
+    // If we're editing the currently selected LLM, update the name if it changed
+    if (updates.name && llmOptions.find(opt => opt.id === id)?.name === currentLLM) {
+      setCurrentLLM(updates.name);
+    }
+  };
+  
+  // Delete an LLM option
+  const deleteLLMOption = (id: string) => {
+    const optionToDelete = llmOptions.find(opt => opt.id === id);
+    
+    // Calculate the updated options list
+    const updatedOptions = llmOptions.filter(option => option.id !== id);
+    
+    // Update the state with the filtered options
+    setLlmOptions(updatedOptions);
+    
+    // Handle the case where the deleted LLM was the current one
+    if (optionToDelete && optionToDelete.name === currentLLM) {
+      // If there are remaining options, switch to the first one
+      if (updatedOptions.length > 0) {
+        setCurrentLLM(updatedOptions[0].name);
+      } else {
+        // If no options are left, set a placeholder value
+        setCurrentLLM('No Models Available');
+      }
+    }
   };
 
   const sendMessage = (content: string) => {
@@ -222,6 +352,7 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         currentConversationId,
         isLoading,
         currentLLM,
+        llmOptions,
         createNewConversation,
         switchConversation,
         sendMessage,
@@ -229,6 +360,9 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         clearConversations,
         updateConversationTitle,
         setLLM,
+        addLLMOption,
+        editLLMOption,
+        deleteLLMOption,
       }}
     >
       {children}
