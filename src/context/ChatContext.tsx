@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Conversation, ChatContextType, Message } from '../types';
+import { Conversation, ChatContextType, Message, LLMModel } from '../types';
 import { generateId, createNewConversationTitle } from '../utils/helpers';
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -22,13 +22,15 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [currentLLM, setCurrentLLM] = useState<LLMModel>('Claude 3 Opus');
 
-  // Load conversations from AsyncStorage on initial load
+  // Load conversations and settings from AsyncStorage on initial load
   useEffect(() => {
-    const loadConversations = async () => {
+    const loadData = async () => {
       try {
         const storedConversations = await AsyncStorage.getItem('conversations');
         const storedCurrentId = await AsyncStorage.getItem('currentConversationId');
+        const storedLLM = await AsyncStorage.getItem('currentLLM');
         
         if (storedConversations) {
           setConversations(JSON.parse(storedConversations));
@@ -37,15 +39,19 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         if (storedCurrentId) {
           setCurrentConversationId(storedCurrentId);
         }
+
+        if (storedLLM) {
+          setCurrentLLM(JSON.parse(storedLLM) as LLMModel);
+        }
       } catch (error) {
-        console.error('Failed to load conversations:', error);
+        console.error('Failed to load data:', error);
       }
     };
     
-    loadConversations();
+    loadData();
   }, []);
 
-  // Save conversations to AsyncStorage whenever they change
+  // Save conversations and settings to AsyncStorage whenever they change
   useEffect(() => {
     const saveConversations = async () => {
       try {
@@ -61,6 +67,19 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
     
     saveConversations();
   }, [conversations, currentConversationId]);
+
+  // Save current LLM to AsyncStorage when it changes
+  useEffect(() => {
+    const saveLLM = async () => {
+      try {
+        await AsyncStorage.setItem('currentLLM', JSON.stringify(currentLLM));
+      } catch (error) {
+        console.error('Failed to save LLM setting:', error);
+      }
+    };
+    
+    saveLLM();
+  }, [currentLLM]);
 
   const createNewConversation = () => {
     const newId = generateId();
@@ -78,6 +97,10 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
 
   const switchConversation = (id: string) => {
     setCurrentConversationId(id);
+  };
+
+  const setLLM = (model: LLMModel) => {
+    setCurrentLLM(model);
   };
 
   const sendMessage = (content: string) => {
@@ -109,11 +132,13 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
     // Simulate AI thinking
     setIsLoading(true);
     
-    // Generate mock response after a delay
+    // Generate mock response after a delay (include the LLM model info)
     setTimeout(() => {
+      // We can include the selected LLM in the response for demonstration
+      const modelPrefix = `Using ${currentLLM}: `;
       const aiMessage: Message = {
         id: generateId(),
-        content: getMockResponse(content),
+        content: modelPrefix + getMockResponse(content),
         role: 'assistant',
         timestamp: Date.now(),
       };
@@ -196,12 +221,14 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         conversations,
         currentConversationId,
         isLoading,
+        currentLLM,
         createNewConversation,
         switchConversation,
         sendMessage,
         deleteConversation,
         clearConversations,
         updateConversationTitle,
+        setLLM,
       }}
     >
       {children}
