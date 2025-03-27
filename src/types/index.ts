@@ -2,15 +2,17 @@ export interface Message {
   id: string;
   content: string;
   role: 'user' | 'assistant';
-  timestamp: number;
+  timestamp: number | string;
+  isLoading?: boolean;
+  isError?: boolean;
 }
 
 export interface Conversation {
   id: string;
   title: string;
   messages: Message[];
-  createdAt: number;
-  updatedAt: number;
+  createdAt: number | string;
+  updatedAt: number | string;
 }
 
 export type LLMModel = string;
@@ -39,6 +41,9 @@ export interface ChatContextType {
   currentLLM: LLMModel;
   llmOptions: LLMOption[];
   userProfile: UserProfile;
+  isInitialLoading: boolean;
+  isTTSEnabled: boolean;
+  ttsVoice: string;
   createNewConversation: () => void;
   switchConversation: (id: string) => void;
   sendMessage: (content: string) => void;
@@ -52,4 +57,7 @@ export interface ChatContextType {
   login: (userData: UserProfile) => Promise<void>;
   logout: () => Promise<void>;
   stopMessageGeneration: () => void;
+  toggleTTS: () => void;
+  changeTTSVoice: (voiceId: string) => void;
+  stopTTS: () => Promise<void>;
 } 

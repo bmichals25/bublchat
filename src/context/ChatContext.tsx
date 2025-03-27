@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { Conversation, ChatContextType, Message, LLMModel, LLMOption } from '../types';
 import { generateId, createNewConversationTitle } from '../utils/helpers';
 import { callLLM } from '../utils/api';
+import { speakText, stopSpeech } from '../utils/tts';
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
@@ -92,6 +93,10 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
   // Add loading state for initial app load
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
+  const [isTTSEnabled, setIsTTSEnabled] = useState<boolean>(false);
+  const [ttsVoice, setTTSVoice] = useState<string>('EXAVITQu4vr4xnSDxMaL'); // Rachel voice ID as default
+  const ttsAbortControllerRef = useRef<AbortController | null>(null);
+
   // Helper function to get storage keys with user ID prefix
   const getUserStorageKey = (key: string) => {
     return userProfile.isLoggedIn 
@@ -172,34 +177,38 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
     loadUserProfile();
   }, []);
 
-  // Load conversations and settings from storage on initial load or when user changes
+  // Load saved conversations from AsyncStorage on startup
   useEffect(() => {
-    const loadData = async () => {
+    const loadSettings = async () => {
       try {
-        // Load data with user-specific keys
+        // Load conversations
         const storedConversations = await loadFromStorage('conversations', []);
-        const storedCurrentId = await loadFromStorage('currentConversationId', null);
-        const storedLLM = await loadFromStorage('currentLLM', 'Claude 3 Opus');
-        const storedLlmOptions = await loadFromStorage('llmOptions', DEFAULT_LLM_OPTIONS);
+        setConversations(storedConversations || []);
         
-        // Update state with the loaded values
-        setConversations(storedConversations);
-        setCurrentConversationId(storedCurrentId);
-        console.log(`[LLM Persistence] Loading LLM from storage: ${storedLLM}`);
+        // Load other settings
+        const storedLLM = await loadFromStorage('currentLLM', 'Claude 3 Sonnet');
         setCurrentLLM(storedLLM);
-        setLlmOptions(storedLlmOptions);
         
-        console.log('User data loaded successfully for', userProfile.username);
+        // Load TTS settings
+        const ttsEnabled = await loadFromStorage('ttsEnabled', false);
+        const savedVoice = await loadFromStorage('ttsSelectedVoice', 'EXAVITQu4vr4xnSDxMaL');
+        
+        setIsTTSEnabled(ttsEnabled);
+        setTTSVoice(savedVoice);
+        
+        console.log('Settings loaded successfully:', {
+          conversations: storedConversations?.length,
+          currentLLM: storedLLM,
+          ttsEnabled,
+          ttsVoice: savedVoice
+        });
       } catch (error) {
-        console.error('Failed to load data:', error);
+        console.error('Error loading settings:', error);
       }
     };
     
-    // Only load data once the user profile is loaded
-    if (!isInitialLoading) {
-      loadData();
-    }
-  }, [userProfile.id, userProfile.isLoggedIn, isInitialLoading]);
+    loadSettings();
+  }, []);
 
   // Save conversations whenever they change
   useEffect(() => {
@@ -219,6 +228,15 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
   useEffect(() => {
     saveToStorage('llmOptions', llmOptions);
   }, [llmOptions, userProfile.id]);
+
+  // Save TTS settings to storage when they change
+  useEffect(() => {
+    saveToStorage('isTTSEnabled', isTTSEnabled);
+  }, [isTTSEnabled, userProfile.id]);
+  
+  useEffect(() => {
+    saveToStorage('ttsVoice', ttsVoice);
+  }, [ttsVoice, userProfile.id]);
 
   // User login/logout functions
   const login = async (userData: typeof MOCK_USER_PROFILE) => {
@@ -333,121 +351,211 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
     saveToStorage('llmOptions', updatedOptions);
   };
 
-  const sendMessage = async (content: string) => {
-    if (!currentConversationId || !content.trim()) return;
+  // Toggle TTS on/off
+  const toggleTTS = () => {
+    const newValue = !isTTSEnabled;
+    setIsTTSEnabled(newValue);
     
-    // Create user message
+    // Save to AsyncStorage
+    try {
+      AsyncStorage.setItem('ttsEnabled', newValue.toString());
+      console.log('TTS enabled state saved:', newValue);
+    } catch (error) {
+      console.error('Failed to save TTS enabled state:', error);
+    }
+  };
+  
+  // Change the TTS voice
+  const changeTTSVoice = (voiceId: string) => {
+    setTTSVoice(voiceId);
+    
+    // Save to AsyncStorage
+    try {
+      AsyncStorage.setItem('ttsSelectedVoice', voiceId);
+      console.log('Selected TTS voice saved:', voiceId);
+    } catch (error) {
+      console.error('Failed to save TTS voice:', error);
+    }
+  };
+  
+  const stopTTS = async () => {
+    // Cancel any ongoing TTS request
+    if (ttsAbortControllerRef.current) {
+      ttsAbortControllerRef.current.abort();
+      ttsAbortControllerRef.current = null;
+    }
+    
+    // Stop any playing audio
+    await stopSpeech();
+  };
+
+  const sendMessage = async (content: string) => {
+    if (!content.trim()) return;
+    
+    // If TTS is playing, stop it
+    console.log('[ChatContext] sendMessage called, stopping any active TTS');
+    await stopTTS();
+    
+    // Find the current conversation or create a new one
+    let conversation: Conversation;
+    
+    if (currentConversationId && conversations.some(conv => conv.id === currentConversationId)) {
+      conversation = conversations.find(conv => conv.id === currentConversationId)!;
+    } else {
+      // Create a new conversation if none exists
+      const newId = generateId();
+      conversation = {
+        id: newId,
+        title: 'New Conversation',
+        messages: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      
+      setConversations(prev => [...prev, conversation]);
+      setCurrentConversationId(newId);
+    }
+    
+    // Add user message to conversation
     const userMessage: Message = {
       id: generateId(),
-      content,
       role: 'user',
-      timestamp: Date.now(),
+      content,
+      timestamp: new Date().toISOString(),
     };
     
-    // Update the conversation with the user message
+    // Create a placeholder for the assistant message
+    const assistantMessage: Message = {
+      id: generateId(),
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isLoading: true,
+    };
+    
+    // Update the conversation with the new messages
+    const updatedConversation = {
+      ...conversation,
+      messages: [...conversation.messages, userMessage, assistantMessage],
+      updatedAt: new Date().toISOString(),
+    };
+    
+    // Update the conversations list with the updated conversation
     setConversations(prevConversations => 
       prevConversations.map(conv => 
-        conv.id === currentConversationId
-          ? { 
-              ...conv, 
-              messages: [...conv.messages, userMessage],
-              updatedAt: Date.now(),
-              // Update title if this is the first message
-              title: conv.messages.length === 0 ? content.substring(0, 30) : conv.title
-            }
-          : conv
+        conv.id === updatedConversation.id ? updatedConversation : conv
       )
     );
     
-    // Create a new AbortController for this request
-    abortControllerRef.current = new AbortController();
-    // Set loading state
+    // Set loading state to show indicator
     setIsLoading(true);
     
+    // Create a single abort controller for both LLM and TTS requests
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    ttsAbortControllerRef.current = abortController;
+    
     try {
-      // Get the system prompt from storage
-      const systemPrompt = await AsyncStorage.getItem('systemPrompt') || 'You are a helpful assistant named bubl.';
-
-      // Get conversation history for context
-      const currentConversation = conversations.find(c => c.id === currentConversationId);
-      const conversationHistory = currentConversation?.messages || [];
+      // Format the conversation history as a prompt
+      const conversationHistory = updatedConversation.messages
+        .slice(0, -1) // Exclude the placeholder assistant message
+        .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .join('\n\n');
       
-      // Format conversation history as a single string for context
-      let conversationContext = '';
-      if (conversationHistory.length > 0) {
-        // Include last few messages for context (limited to avoid token limits)
-        const contextMessages = conversationHistory.slice(-6);
-        conversationContext = contextMessages.map(msg => 
-          `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-        ).join('\n\n');
-        
-        // Add the current message
-        conversationContext += `\n\nUser: ${content}`;
-      } else {
-        conversationContext = `User: ${content}`;
-      }
-      
-      // Call the LLM API with the AbortController
+      // Call the LLM API
+      console.log('[ChatContext] Calling LLM API with model:', currentLLM);
       const response = await callLLM({
         model: currentLLM,
-        prompt: conversationContext,
-        systemPrompt,
-        abortController: abortControllerRef.current
+        prompt: conversationHistory,
+        systemPrompt: "You are a helpful assistant.",
+        abortController
       });
       
-      // Only add the response if it's not empty (empty indicates aborted)
-      if (response.text) {
-        // Create AI message with the response
-        const aiMessage: Message = {
-          id: generateId(),
-          content: response.text,
-          role: 'assistant',
-          timestamp: Date.now(),
-        };
-        
-        // Update conversation with AI response
-        setConversations(prevConversations => 
-          prevConversations.map(conv => 
-            conv.id === currentConversationId
-              ? { 
-                  ...conv, 
-                  messages: [...conv.messages, aiMessage],
-                  updatedAt: Date.now() 
-                }
-              : conv
-          )
-        );
+      // If the request was aborted, don't update the message
+      if (abortControllerRef.current === null) {
+        console.log('[ChatContext] LLM request was aborted, not updating message');
+        return;
       }
-    } catch (error) {
-      console.error('Error calling LLM API:', error);
       
-      // Only add error message if not explicitly aborted
-      if (!(error instanceof DOMException && error.name === 'AbortError')) {
-        // Create error message
-        const errorMessage: Message = {
-          id: generateId(),
-          content: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
-          role: 'assistant',
-          timestamp: Date.now(),
+      // Update the assistant message with the response
+      const responseText = response.text.trim();
+      console.log('[ChatContext] Received response from LLM, length:', responseText.length);
+      
+      // Update conversations with the response
+      setConversations(prevConversations => {
+        const convIndex = prevConversations.findIndex(conv => conv.id === updatedConversation.id);
+        if (convIndex === -1) return prevConversations;
+        
+        const conversation = prevConversations[convIndex];
+        const messages = [...conversation.messages];
+        const assistantMsgIndex = messages.findIndex(msg => msg.id === assistantMessage.id);
+        
+        if (assistantMsgIndex !== -1) {
+          messages[assistantMsgIndex] = {
+            ...messages[assistantMsgIndex],
+            content: responseText,
+            isLoading: false,
+          };
+        }
+        
+        // Update the conversation with the new messages
+        const updatedConv = {
+          ...conversation,
+          messages,
+          title: conversation.messages.length <= 2 ? createNewConversationTitle(userMessage.content) : conversation.title,
+          updatedAt: new Date().toISOString(),
         };
         
-        // Update conversation with error message
-        setConversations(prevConversations => 
-          prevConversations.map(conv => 
-            conv.id === currentConversationId
-              ? { 
-                  ...conv, 
-                  messages: [...conv.messages, errorMessage],
-                  updatedAt: Date.now() 
-                }
-              : conv
-          )
-        );
-      }
+        // Create a new array with the updated conversation
+        const updatedConversations = [...prevConversations];
+        updatedConversations[convIndex] = updatedConv;
+        
+        return updatedConversations;
+      });
+      
+      // We don't need to manually trigger TTS here - the MessageItem component
+      // will automatically play for the latest AI message when it renders
+      // This prevents duplicate TTS playback
+      console.log('[ChatContext] Message updated, TTS will be handled by MessageItem');
+      
+    } catch (error) {
+      console.error('[ChatContext] Error sending message:', error);
+      
+      // Update the assistant message to show the error
+      setConversations(prevConversations => {
+        const convIndex = prevConversations.findIndex(conv => conv.id === updatedConversation.id);
+        if (convIndex === -1) return prevConversations;
+        
+        const conversation = prevConversations[convIndex];
+        const messages = [...conversation.messages];
+        const assistantMsgIndex = messages.findIndex(msg => msg.id === assistantMessage.id);
+        
+        if (assistantMsgIndex !== -1) {
+          messages[assistantMsgIndex] = {
+            ...messages[assistantMsgIndex],
+            content: 'Sorry, there was an error generating a response. Please try again.',
+            isLoading: false,
+            isError: true,
+          };
+        }
+        
+        // Update the conversation with the new messages
+        const updatedConv = {
+          ...conversation,
+          messages,
+          updatedAt: new Date().toISOString(),
+        };
+        
+        // Create a new array with the updated conversation
+        const updatedConversations = [...prevConversations];
+        updatedConversations[convIndex] = updatedConv;
+        
+        return updatedConversations;
+      });
     } finally {
-      // Clear the AbortController reference and reset loading state
-      abortControllerRef.current = null;
       setIsLoading(false);
+      abortControllerRef.current = null;
+      ttsAbortControllerRef.current = null;
     }
   };
 
@@ -509,11 +617,21 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
 
   // Update stopMessageGeneration to abort the request
   const stopMessageGeneration = () => {
-    if (isLoading && abortControllerRef.current) {
-      // Abort the fetch request
+    if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-      setIsLoading(false);
+      abortControllerRef.current = null;
     }
+    
+    // Also stop TTS
+    if (ttsAbortControllerRef.current) {
+      ttsAbortControllerRef.current.abort();
+      ttsAbortControllerRef.current = null;
+    }
+    
+    // Call stopSpeech to stop any playing audio
+    stopSpeech();
+    
+    setIsLoading(false);
   };
 
   return (
@@ -525,19 +643,25 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         currentLLM,
         llmOptions,
         userProfile,
+        isInitialLoading,
+        isTTSEnabled,
+        ttsVoice,
         createNewConversation,
         switchConversation,
         sendMessage,
         deleteConversation,
         clearConversations,
         updateConversationTitle,
+        stopMessageGeneration,
         setLLM,
         addLLMOption,
         editLLMOption,
         deleteLLMOption,
         login,
         logout,
-        stopMessageGeneration
+        toggleTTS,
+        changeTTSVoice,
+        stopTTS,
       }}
     >
       {children}
