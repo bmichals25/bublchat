@@ -18,29 +18,67 @@ interface TTSOptions {
   detailed_metadata?: boolean; // Add option for detailed phoneme metadata
 }
 
-// Get the ElevenLabs API key from AsyncStorage
-const getElevenLabsApiKey = async (): Promise<string | null> => {
+// Add a cache for the API key to avoid frequent AsyncStorage calls
+let cachedApiKey: string | null = null;
+
+/**
+ * Gets the ElevenLabs API key from AsyncStorage
+ * @returns The API key or null if not found
+ */
+export const getElevenLabsApiKey = async (): Promise<string | null> => {
   try {
-    return await AsyncStorage.getItem('elevenLabsApiKey');
+    const apiKey = await AsyncStorage.getItem('elevenlabs_api_key');
+    return apiKey;
   } catch (error) {
-    console.error('Error retrieving ElevenLabs API key:', error);
+    console.error('Error getting ElevenLabs API key:', error);
     return null;
   }
 };
 
-// Set the ElevenLabs API key in AsyncStorage
-export const setElevenLabsApiKey = async (apiKey: string): Promise<void> => {
+/**
+ * Sets the ElevenLabs API key in AsyncStorage
+ * @param apiKey The API key to save
+ * @returns A boolean indicating success or failure
+ */
+export const setElevenLabsApiKey = async (apiKey: string): Promise<boolean> => {
   try {
-    await AsyncStorage.setItem('elevenLabsApiKey', apiKey);
+    await AsyncStorage.setItem('elevenlabs_api_key', apiKey);
+    console.log('ElevenLabs API key saved successfully');
+    return true;
   } catch (error) {
     console.error('Error saving ElevenLabs API key:', error);
-    throw error;
+    return false;
   }
+};
+
+/**
+ * Clear the cached API key
+ * Will force the system to retrieve a fresh copy from AsyncStorage
+ */
+export const clearCachedApiKey = () => {
+  cachedApiKey = null;
+};
+
+/**
+ * Gets the ElevenLabs API key, using cache if available or retrieving from storage
+ * @param forceRefresh Whether to bypass the cache and fetch from AsyncStorage
+ * @returns The API key or null if not found
+ */
+export const getElevenLabsApiKeyWithCache = async (forceRefresh = false): Promise<string | null> => {
+  if (cachedApiKey !== null && !forceRefresh) {
+    return cachedApiKey;
+  }
+  
+  const apiKey = await getElevenLabsApiKey();
+  if (apiKey) {
+    cachedApiKey = apiKey;
+  }
+  return apiKey;
 };
 
 // Function to fetch available voices from ElevenLabs
 export const getAvailableVoices = async (): Promise<any[]> => {
-  const apiKey = await getElevenLabsApiKey();
+  const apiKey = await getElevenLabsApiKeyWithCache();
   
   if (!apiKey) {
     throw new Error('ElevenLabs API key not found');
@@ -137,7 +175,7 @@ export const speakText = async (options: TTSOptions): Promise<{
     }
   }
   
-  const apiKey = await getElevenLabsApiKey();
+  const apiKey = await getElevenLabsApiKeyWithCache();
   
   if (!apiKey) {
     isProcessingTTS = false;

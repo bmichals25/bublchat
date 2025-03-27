@@ -5,6 +5,7 @@ import { Conversation, ChatContextType, Message, LLMModel, LLMOption } from '../
 import { generateId, createNewConversationTitle } from '../utils/helpers';
 import { callLLM } from '../utils/api';
 import { speakText, stopSpeech } from '../utils/tts';
+import { Audio } from 'expo-av';
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
@@ -83,7 +84,7 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [currentLLM, setCurrentLLM] = useState<LLMModel>('Claude 3 Opus');
+  const [currentLLM, setCurrentLLM] = useState<LLMModel>('GPT-4o');
   const [llmOptions, setLlmOptions] = useState<LLMOption[]>(DEFAULT_LLM_OPTIONS);
   // Replace messageAborted with abortController ref
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -96,6 +97,10 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
   const [isTTSEnabled, setIsTTSEnabled] = useState<boolean>(false);
   const [ttsVoice, setTTSVoice] = useState<string>('EXAVITQu4vr4xnSDxMaL'); // Rachel voice ID as default
   const ttsAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Add these state variables to the ChatContext provider
+  const [currentSound, setCurrentSound] = useState<Audio.Sound | null>(null);
+  const [currentAlignmentData, setCurrentAlignmentData] = useState<any>(null);
 
   // Helper function to get storage keys with user ID prefix
   const getUserStorageKey = (key: string) => {
@@ -181,17 +186,31 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
   useEffect(() => {
     const loadSettings = async () => {
       try {
+        setIsInitialLoading(true);
+        
         // Load conversations
         const storedConversations = await loadFromStorage('conversations', []);
         setConversations(storedConversations || []);
         
-        // Load other settings
-        const storedLLM = await loadFromStorage('currentLLM', 'Claude 3 Sonnet');
+        // Load current conversation ID
+        const storedConversationId = await loadFromStorage('currentConversationId', null);
+        if (storedConversationId) {
+          setCurrentConversationId(storedConversationId);
+        }
+        
+        // Load LLM settings with GPT-4o as fallback
+        const storedLLM = await loadFromStorage('currentLLM', 'GPT-4o');
         setCurrentLLM(storedLLM);
+        
+        // Load custom LLM options if available
+        const storedLLMOptions = await loadFromStorage('llmOptions', null);
+        if (storedLLMOptions) {
+          setLlmOptions(storedLLMOptions);
+        }
         
         // Load TTS settings
         const ttsEnabled = await loadFromStorage('ttsEnabled', false);
-        const savedVoice = await loadFromStorage('ttsSelectedVoice', 'EXAVITQu4vr4xnSDxMaL');
+        const savedVoice = await loadFromStorage('ttsVoice', 'EXAVITQu4vr4xnSDxMaL');
         
         setIsTTSEnabled(ttsEnabled);
         setTTSVoice(savedVoice);
@@ -204,6 +223,8 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         });
       } catch (error) {
         console.error('Error loading settings:', error);
+      } finally {
+        setIsInitialLoading(false);
       }
     };
     
@@ -646,6 +667,10 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         isInitialLoading,
         isTTSEnabled,
         ttsVoice,
+        currentSound,
+        setCurrentSound,
+        currentAlignmentData,
+        setCurrentAlignmentData,
         createNewConversation,
         switchConversation,
         sendMessage,

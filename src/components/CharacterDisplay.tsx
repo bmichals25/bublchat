@@ -19,9 +19,9 @@ const CharacterDisplay: React.FC<CharacterDisplayProps> = ({
 }) => {
   const [selectedCharacter, setSelectedCharacter] = useState<string>('default');
   const [characterEnabled, setCharacterEnabled] = useState<boolean>(true);
-  const [testMode, setTestMode] = useState<boolean>(true); // Default to test mode ON
+  const [testMode, setTestMode] = useState<boolean>(false); // Default to test mode OFF
   const [dummySound, setDummySound] = useState<Audio.Sound | null>(null);
-  const { isTTSEnabled } = useChat();
+  const { isTTSEnabled, currentSound, currentAlignmentData } = useChat();
   const { isDark, darkTheme } = useTheme();
   
   // For testing - create custom alignment data with a single viseme
@@ -168,8 +168,8 @@ const CharacterDisplay: React.FC<CharacterDisplayProps> = ({
               character={selectedCharacter}
               size={size}
               blinkingEnabled={true}
-              alignmentData={testMode ? testAlignmentData : undefined}
-              sound={testMode ? dummySound : undefined}
+              alignmentData={currentSound ? currentAlignmentData : (testMode ? testAlignmentData : undefined)}
+              sound={currentSound || (testMode ? dummySound : undefined)}
               style={styles.avatar}
             />
           </View>
@@ -182,7 +182,7 @@ const CharacterDisplay: React.FC<CharacterDisplayProps> = ({
             onPress={toggleTestMode}
           >
             <IconButton
-              icon={testMode ? "face" : "face-outline"}
+              icon={testMode ? "emoticon-happy" : "emoticon-outline"}
               size={24}
               iconColor={isDark ? darkTheme.primary : "#54C6EB"}
             />
@@ -190,7 +190,7 @@ const CharacterDisplay: React.FC<CharacterDisplayProps> = ({
               styles.toggleButtonText,
               isDark && { color: darkTheme.text }
             ]}>
-              {testMode ? "Testing Viseme" : "Normal Mode"}
+              {currentSound ? "Live Speech" : (testMode ? "Testing Viseme" : "Normal Mode")}
             </Text>
           </TouchableOpacity>
         </>

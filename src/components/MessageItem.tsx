@@ -6,7 +6,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { speakText, stopSpeech } from '../utils/tts';
 import { useChat } from '../context/ChatContext';
 import ProgressiveText from './ProgressiveText';
-import LipSync from './CharacterAvatar/LipSync';
 
 // Define refined dark mode colors for MessageItem to match Chat screen
 const darkThemeDefaults = {
@@ -35,7 +34,7 @@ const MessageItem: React.FC<MessageItemProps> = ({
 }) => {
   const dimensions = useWindowDimensions();
   const isUser = message.role === 'user';
-  const { isTTSEnabled } = useChat();
+  const { isTTSEnabled, setCurrentSound, setCurrentAlignmentData } = useChat();
   const [isPlaying, setIsPlaying] = useState(false);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [alignmentData, setAlignmentData] = useState<any>(null);
@@ -92,6 +91,9 @@ const MessageItem: React.FC<MessageItemProps> = ({
       await stopSpeech();
       setIsPlaying(false);
       setSound(null);
+      // Clear the context sound and alignment data
+      setCurrentSound(null);
+      setCurrentAlignmentData(null);
       return;
     }
     
@@ -111,6 +113,11 @@ const MessageItem: React.FC<MessageItemProps> = ({
       
       setSound(result.sound);
       setAlignmentData(result.alignmentData);
+      
+      // Store the sound and alignment data in the context
+      setCurrentSound(result.sound);
+      setCurrentAlignmentData(result.alignmentData);
+      
       setIsPlaying(true);
       setIsComplete(false);
       setShowContent(true); // Show content once TTS is loaded
@@ -123,6 +130,9 @@ const MessageItem: React.FC<MessageItemProps> = ({
             console.log('[MessageItem] Playback finished for message:', message.id);
             setIsPlaying(false);
             setIsComplete(true);
+            // Clear the context sound and alignment data
+            setCurrentSound(null);
+            setCurrentAlignmentData(null);
             // Don't unload the sound here so we can keep the alignment data
           } else if (status.isPlaying) {
             // This ensures we're actually playing
@@ -177,13 +187,12 @@ const MessageItem: React.FC<MessageItemProps> = ({
         <View style={styles.messageContent}>
           {showContent ? (
             <>
-              {/* Show lip-sync character for AI messages that are currently being played */}
+              {/* Show text-to-speech for AI messages that are currently being played */}
               {!isUser && isPlaying && sound && alignmentData ? (
-                <LipSync
+                <ProgressiveText
                   text={message.content}
                   sound={sound}
                   alignmentData={alignmentData}
-                  characterSize={150}
                   textColor={isDarkMode ? darkThemeColors.text : '#111827'}
                   fontSize={16}
                   isDark={isDarkMode}

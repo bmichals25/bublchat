@@ -16,32 +16,69 @@ interface APICallOptions {
   abortController?: AbortController;
 }
 
-// Function to get API key from storage
-const getApiKey = async (provider: string): Promise<string | null> => {
+// Function to get API key with error handling
+export const getApiKey = async (provider: string): Promise<string | null> => {
   try {
-    let key: string | null = null;
+    let storageKey: string;
     
     switch (provider.toLowerCase()) {
       case 'openai':
-        key = await AsyncStorage.getItem('openaiApiKey');
+        storageKey = 'openaiApiKey';
         break;
       case 'anthropic':
-        key = await AsyncStorage.getItem('anthropicApiKey');
-        break;
-      case 'mistral':
-        key = await AsyncStorage.getItem('mistralApiKey');
+        storageKey = 'anthropicApiKey';
         break;
       case 'google':
-        key = await AsyncStorage.getItem('googleApiKey');
+        storageKey = 'googleApiKey';
+        break;
+      case 'mistral':
+        storageKey = 'mistralApiKey';
         break;
       default:
-        console.warn(`No API key defined for provider: ${provider}`);
+        console.error(`Unknown provider: ${provider}`);
+        return null;
     }
     
+    const key = await AsyncStorage.getItem(storageKey);
+    if (!key) {
+      console.warn(`No API key found for ${provider}`);
+    }
     return key;
   } catch (error) {
-    console.error('Error retrieving API key:', error);
+    console.error(`Error retrieving ${provider} API key:`, error);
     return null;
+  }
+};
+
+// Function to save API key with error handling
+export const saveApiKey = async (provider: string, key: string): Promise<boolean> => {
+  try {
+    let storageKey: string;
+    
+    switch (provider.toLowerCase()) {
+      case 'openai':
+        storageKey = 'openaiApiKey';
+        break;
+      case 'anthropic':
+        storageKey = 'anthropicApiKey';
+        break;
+      case 'google':
+        storageKey = 'googleApiKey';
+        break;
+      case 'mistral':
+        storageKey = 'mistralApiKey';
+        break;
+      default:
+        console.error(`Unknown provider: ${provider}`);
+        return false;
+    }
+    
+    await AsyncStorage.setItem(storageKey, key);
+    console.log(`Successfully saved API key for ${provider}`);
+    return true;
+  } catch (error) {
+    console.error(`Error saving ${provider} API key:`, error);
+    return false;
   }
 };
 

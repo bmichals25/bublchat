@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, TextInput, TouchableOpacity, Switch, ScrollView, Platform } from 'react-native';
+import { View, StyleSheet, Text, TextInput, TouchableOpacity, Switch, ScrollView, Platform, Alert } from 'react-native';
 import Slider from '@react-native-community/slider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useChat } from '../context/ChatContext';
 import { useTheme } from '../context/ThemeContext';
 import { setElevenLabsApiKey, getAvailableVoices } from '../utils/tts';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface ApiKeyState {
   openai: string;
@@ -20,9 +23,17 @@ interface VoiceOption {
   preview_url?: string;
 }
 
+// Add the RootStackParamList type to properly type the navigation
+type RootStackParamList = {
+  LipSyncTester: undefined;
+  [key: string]: undefined | object;
+};
+
+type NavigationProp = StackNavigationProp<RootStackParamList>;
+
 const Settings = () => {
   const { currentLLM, setLLM, llmOptions, isTTSEnabled, toggleTTS, ttsVoice, changeTTSVoice } = useChat();
-  const { isDark } = useTheme();
+  const { isDark, darkTheme } = useTheme();
   const [apiKeys, setApiKeys] = useState<ApiKeyState>({
     openai: '',
     anthropic: '',
@@ -35,6 +46,7 @@ const Settings = () => {
   const [stability, setStability] = useState(0.5);
   const [similarityBoost, setSimilarityBoost] = useState(0.5);
   const [speakerBoost, setSpeakerBoost] = useState(false);
+  const navigation = useNavigation<NavigationProp>();
   
   // Load API keys on component mount
   useEffect(() => {
@@ -46,13 +58,17 @@ const Settings = () => {
         const mistralKey = await AsyncStorage.getItem('mistralApiKey') || '';
         const elevenlabsKey = await AsyncStorage.getItem('elevenLabsApiKey') || '';
         
-        setApiKeys({
+        const loadedKeys = {
           openai: openaiKey,
           anthropic: anthropicKey,
           google: googleKey,
           mistral: mistralKey,
           elevenlabs: elevenlabsKey
-        });
+        };
+        
+        setApiKeys(loadedKeys);
+        
+        console.log('API keys loaded successfully');
       } catch (error) {
         console.error('Error loading API keys:', error);
       }
@@ -65,6 +81,7 @@ const Settings = () => {
   useEffect(() => {
     const loadVoiceSettings = async () => {
       try {
+        // Load voice settings from AsyncStorage
         const savedStability = await AsyncStorage.getItem('ttsStability');
         const savedSimilarityBoost = await AsyncStorage.getItem('ttsSimilarityBoost');
         const savedSpeakerBoost = await AsyncStorage.getItem('ttsSpeakerBoost');
@@ -72,6 +89,12 @@ const Settings = () => {
         if (savedStability) setStability(parseFloat(savedStability));
         if (savedSimilarityBoost) setSimilarityBoost(parseFloat(savedSimilarityBoost));
         if (savedSpeakerBoost) setSpeakerBoost(savedSpeakerBoost === 'true');
+        
+        console.log('Voice settings loaded:', {
+          stability: savedStability ? parseFloat(savedStability) : 0.5,
+          similarityBoost: savedSimilarityBoost ? parseFloat(savedSimilarityBoost) : 0.5,
+          speakerBoost: savedSpeakerBoost === 'true'
+        });
       } catch (error) {
         console.error('Error loading voice settings:', error);
       }
@@ -107,7 +130,7 @@ const Settings = () => {
       // Update state
       setApiKeys(prev => ({ ...prev, [provider]: key }));
       
-      // Save to AsyncStorage
+      // Save to AsyncStorage with consistent storage keys
       switch (provider) {
         case 'openai':
           await AsyncStorage.setItem('openaiApiKey', key);
@@ -122,11 +145,13 @@ const Settings = () => {
           await AsyncStorage.setItem('mistralApiKey', key);
           break;
         case 'elevenlabs':
+          // For ElevenLabs, store both in its own function and in AsyncStorage to ensure persistence
           await setElevenLabsApiKey(key);
+          await AsyncStorage.setItem('elevenLabsApiKey', key);
           break;
       }
       
-      console.log(`${provider} API key saved successfully`);
+      console.log(`${provider} API key saved successfully: ${key.substring(0, 3)}...${key.substring(key.length - 3)}`);
     } catch (error) {
       console.error(`Error saving ${provider} API key:`, error);
     }
@@ -185,6 +210,7 @@ const Settings = () => {
             value={apiKeys.openai}
             onChangeText={(text) => setApiKeys(prev => ({ ...prev, openai: text }))}
             onBlur={() => saveApiKey('openai', apiKeys.openai)}
+            onEndEditing={() => saveApiKey('openai', apiKeys.openai)}
             placeholder="Enter OpenAI API key"
             placeholderTextColor={isDark ? '#9ca3af' : '#a0aec0'}
             secureTextEntry={true}
@@ -198,6 +224,7 @@ const Settings = () => {
             value={apiKeys.anthropic}
             onChangeText={(text) => setApiKeys(prev => ({ ...prev, anthropic: text }))}
             onBlur={() => saveApiKey('anthropic', apiKeys.anthropic)}
+            onEndEditing={() => saveApiKey('anthropic', apiKeys.anthropic)}
             placeholder="Enter Anthropic API key"
             placeholderTextColor={isDark ? '#9ca3af' : '#a0aec0'}
             secureTextEntry={true}
@@ -211,6 +238,7 @@ const Settings = () => {
             value={apiKeys.mistral}
             onChangeText={(text) => setApiKeys(prev => ({ ...prev, mistral: text }))}
             onBlur={() => saveApiKey('mistral', apiKeys.mistral)}
+            onEndEditing={() => saveApiKey('mistral', apiKeys.mistral)}
             placeholder="Enter Mistral API key"
             placeholderTextColor={isDark ? '#9ca3af' : '#a0aec0'}
             secureTextEntry={true}
@@ -224,11 +252,30 @@ const Settings = () => {
             value={apiKeys.google}
             onChangeText={(text) => setApiKeys(prev => ({ ...prev, google: text }))}
             onBlur={() => saveApiKey('google', apiKeys.google)}
+            onEndEditing={() => saveApiKey('google', apiKeys.google)}
             placeholder="Enter Google API key"
             placeholderTextColor={isDark ? '#9ca3af' : '#a0aec0'}
             secureTextEntry={true}
           />
         </View>
+        
+        <TouchableOpacity
+          style={[
+            styles.saveButton,
+            { backgroundColor: isDark ? darkTheme.primary : '#54C6EB' }
+          ]}
+          onPress={() => {
+            // Save all API keys
+            Object.entries(apiKeys).forEach(([provider, value]) => {
+              saveApiKey(provider as keyof ApiKeyState, value);
+            });
+            
+            // Show feedback toast or message
+            Alert.alert('Success', 'All API keys saved successfully');
+          }}
+        >
+          <Text style={styles.saveButtonText}>Save All API Keys</Text>
+        </TouchableOpacity>
       </View>
       
       {/* Text-to-Speech Settings */}
@@ -242,6 +289,7 @@ const Settings = () => {
             value={apiKeys.elevenlabs}
             onChangeText={(text) => setApiKeys(prev => ({ ...prev, elevenlabs: text }))}
             onBlur={() => saveApiKey('elevenlabs', apiKeys.elevenlabs)}
+            onEndEditing={() => saveApiKey('elevenlabs', apiKeys.elevenlabs)}
             placeholder="Enter ElevenLabs API key"
             placeholderTextColor={isDark ? '#9ca3af' : '#a0aec0'}
             secureTextEntry={true}
@@ -348,6 +396,31 @@ const Settings = () => {
             </View>
           </>
         )}
+      </View>
+      
+      {/* Add a section for lip-sync testing in the settings list */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, isDark && { color: darkTheme.text }]}>
+          Character & Lip-sync
+        </Text>
+        <TouchableOpacity
+          style={[styles.settingRow, isDark && { backgroundColor: darkTheme.cardBackground }]}
+          onPress={() => navigation.navigate('LipSyncTester')}
+        >
+          <View style={styles.settingInfo}>
+            <Text style={[styles.settingTitle, isDark && { color: darkTheme.text }]}>
+              Lip-sync Tester
+            </Text>
+            <Text style={[styles.settingDescription, isDark && { color: darkTheme.textSecondary }]}>
+              Test and refine the character's lip-sync animation
+            </Text>
+          </View>
+          <MaterialCommunityIcons
+            name="chevron-right"
+            size={24}
+            color={isDark ? darkTheme.textSecondary : '#888'}
+          />
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -484,6 +557,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginTop: 4,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+  },
+  settingInfo: {
+    flex: 1,
+  },
+  settingTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  settingDescription: {
+    fontSize: 14,
+    color: '#666',
+  },
+  saveButton: {
+    backgroundColor: '#54C6EB',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  saveButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 16,
   },
 });
 

@@ -44,6 +44,8 @@ export interface ChatContextType {
   isInitialLoading: boolean;
   isTTSEnabled: boolean;
   ttsVoice: string;
+  currentSound: any; // Sound object from expo-av
+  currentAlignmentData: any; // Alignment data for lip sync
   createNewConversation: () => void;
   switchConversation: (id: string) => void;
   sendMessage: (content: string) => void;
@@ -60,4 +62,6 @@ export interface ChatContextType {
   toggleTTS: () => void;
   changeTTSVoice: (voiceId: string) => void;
   stopTTS: () => Promise<void>;
+  setCurrentSound: (sound: any) => void;
+  setCurrentAlignmentData: (data: any) => void;
 } 
