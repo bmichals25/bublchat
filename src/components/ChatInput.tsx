@@ -39,7 +39,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
 }) => {
   const [inputText, setInputText] = useState('');
   const [isMacOS, setIsMacOS] = useState(false);
-  const { sendMessage, currentConversationId } = useChat();
+  const { sendMessage, currentConversationId, isLoading, stopMessageGeneration } = useChat();
   
   // Animation values for the glowing border effect
   const animatedValue = useRef(new Animated.Value(0)).current;
@@ -84,6 +84,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, []);
   
   const handleSend = () => {
+    if (isLoading) {
+      // If we're currently loading, stop the message generation instead
+      stopMessageGeneration();
+      return;
+    }
+    
     if (inputText.trim() === '' || !currentConversationId) return;
     
     sendMessage(inputText);
@@ -189,30 +195,42 @@ const ChatInput: React.FC<ChatInputProps> = ({
               selectionColor={darkThemeColors.primary}
               underlineColorAndroid="transparent"
               onKeyPress={handleKeyPress}
+              editable={!isLoading}
             />
             
             <TouchableOpacity
               style={[
                 styles.sendButton,
-                !inputText.trim() && [
+                !inputText.trim() && !isLoading && [
                   styles.sendButtonDisabled,
                   isDarkMode && {
                     backgroundColor: darkThemeColors.border,
                   }
                 ],
-                inputText.trim() && isDarkMode && {
+                isLoading && {
+                  backgroundColor: isDarkMode ? darkThemeColors.primaryLight : '#54C6EB',
+                },
+                inputText.trim() && !isLoading && isDarkMode && {
                   backgroundColor: darkThemeColors.primary,
                   shadowColor: '#000',
                   shadowOpacity: 0.3,
                 }
               ]}
               onPress={handleSend}
-              disabled={!inputText.trim() || !currentConversationId}
+              disabled={!isLoading && (!inputText.trim() || !currentConversationId)}
             >
               <IconButton
-                icon="send"
+                icon={isLoading ? "stop" : "send"}
                 size={24}
-                iconColor={inputText.trim() ? "#ffffff" : isDarkMode ? darkThemeColors.textTertiary : "#9CA3AF"}
+                iconColor={
+                  isLoading
+                    ? "#ffffff"
+                    : inputText.trim() 
+                      ? "#ffffff" 
+                      : isDarkMode 
+                        ? darkThemeColors.textTertiary 
+                        : "#9CA3AF"
+                }
                 style={styles.sendIcon}
               />
             </TouchableOpacity>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, FlatList, Text, TouchableOpacity, useWindowDimensions, Animated, Easing, Platform, Image, Modal as RNModal, ScrollView, TextInput as RNTextInput, Dimensions, Pressable, Switch, TouchableWithoutFeedback } from 'react-native';
+import { View, StyleSheet, FlatList, Text, TouchableOpacity, useWindowDimensions, Animated, Easing, Platform, Image, Modal as RNModal, ScrollView, TextInput as RNTextInput, Dimensions, Pressable, Switch, TouchableWithoutFeedback, ActivityIndicator, Alert } from 'react-native';
 import { IconButton, Menu, Button, Avatar, Divider, Modal, Portal, TextInput } from 'react-native-paper';
 import { useChat } from '../context/ChatContext';
 import { useTheme } from '../context/ThemeContext';
@@ -141,18 +141,43 @@ const SettingsPanel = (props: SettingsPanelProps) => {
   const [newLLMDescription, setNewLLMDescription] = useState('');
   const [showProviderDropdown, setShowProviderDropdown] = useState(false);
   
-  // Function to handle saving API keys
-  const saveApiKeys = () => {
-    console.log('Saving API keys...');
-    // Here you would save the keys to secure storage
-    // This is just a placeholder - in a real app, you'd use something like
-    // AsyncStorage, SecureStore, or a backend API
+  // Load saved API keys on component mount
+  useEffect(() => {
+    const loadApiKeys = async () => {
+      try {
+        const savedOpenaiKey = await AsyncStorage.getItem('openaiApiKey');
+        const savedAnthropicKey = await AsyncStorage.getItem('anthropicApiKey');
+        const savedMistralKey = await AsyncStorage.getItem('mistralApiKey');
+        const savedSystemPrompt = await AsyncStorage.getItem('systemPrompt');
+        
+        if (savedOpenaiKey) setOpenaiKey(savedOpenaiKey);
+        if (savedAnthropicKey) setAnthropicKey(savedAnthropicKey);
+        if (savedMistralKey) setMistralKey(savedMistralKey);
+        if (savedSystemPrompt) setSystemPrompt(savedSystemPrompt);
+      } catch (error) {
+        console.error('Failed to load API keys:', error);
+      }
+    };
     
-    // Show a saved confirmation
-    setKeysSaved(true);
-    setTimeout(() => {
-      setKeysSaved(false);
-    }, 3000);
+    loadApiKeys();
+  }, []);
+  
+  // Update the saveApiKeys function to save both API keys and system prompt to AsyncStorage
+  const saveApiKeys = () => {
+    try {
+      AsyncStorage.setItem('openaiApiKey', openaiKey);
+      AsyncStorage.setItem('anthropicApiKey', anthropicKey);
+      AsyncStorage.setItem('mistralApiKey', mistralKey);
+      AsyncStorage.setItem('systemPrompt', systemPrompt);
+      
+      // Show success message
+      setKeysSaved(true);
+      setTimeout(() => {
+        setKeysSaved(false);
+      }, 3000);
+    } catch (error) {
+      console.error('Failed to save API keys:', error);
+    }
   };
   
   // Render tab content based on active tab
@@ -264,7 +289,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                           <TouchableOpacity
                             key={option.id}
                             style={[
-                              styles.dropdownItem,
+                              styles.llmDropdownItem,
                               currentLLM === option.name && { backgroundColor: isDark ? 'rgba(84, 198, 235, 0.2)' : '#e6f7ff' },
                             ]}
                             onPress={() => handleLLMSelection(option.name)}
@@ -280,7 +305,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                           </TouchableOpacity>
                         ))
                       ) : (
-                        <View style={styles.dropdownItem}>
+                        <View style={styles.llmDropdownItem}>
                           <Text style={[styles.dropdownText, isDark && { color: darkTheme.text }]}>
                             No models available
                           </Text>
@@ -396,10 +421,16 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 mode="outlined"
                 onPress={() => {
                   // Show confirmation dialog
-                  if (confirm('This will reset all LLM options to default. Customizations will be lost. Continue?')) {
+                  if (confirm('This will reset all LLM options to default and clear API keys. Customizations will be lost. Continue?')) {
                     // Clear the stored LLM options by setting an empty array
-                    // The app will load defaults on next startup
                     AsyncStorage.setItem('llmOptions', JSON.stringify([]));
+                    
+                    // Also clear saved API keys
+                    AsyncStorage.removeItem('openaiApiKey');
+                    AsyncStorage.removeItem('anthropicApiKey');
+                    AsyncStorage.removeItem('mistralApiKey');
+                    AsyncStorage.removeItem('systemPrompt');
+                    
                     // Reload the page to apply changes
                     if (typeof window !== 'undefined') {
                       window.location.reload();
@@ -1001,7 +1032,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             {/* Claude options with improved styling */}
             <TouchableOpacity 
               style={[
-                styles.dropdownItem,
+                styles.llmDropdownItem,
                 currentLLM === 'Claude 3 Opus' && { 
                   backgroundColor: isDark ? 'rgba(84, 198, 235, 0.2)' : '#e6f7ff' 
                 }
@@ -1025,7 +1056,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             
             <TouchableOpacity 
               style={[
-                styles.dropdownItem,
+                styles.llmDropdownItem,
                 currentLLM === 'Claude 3 Sonnet' && { 
                   backgroundColor: isDark ? 'rgba(84, 198, 235, 0.2)' : '#e6f7ff' 
                 }
@@ -1049,7 +1080,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
             
             <TouchableOpacity 
               style={[
-                styles.dropdownItem,
+                styles.llmDropdownItem,
                 currentLLM === 'Claude 3 Haiku' && { 
                   backgroundColor: isDark ? 'rgba(84, 198, 235, 0.2)' : '#e6f7ff' 
                 }
@@ -1177,10 +1208,24 @@ const ChatScreen: React.FC = () => {
     editLLMOption, 
     deleteLLMOption, 
     createNewConversation, 
-    updateConversationTitle 
+    updateConversationTitle,
+    userProfile,
+    login,
+    logout,
+    sendMessage
   } = useChat();
   
-  const [currentLLM, setCurrentLLM] = useState<LLMModel>(contextLLM || 'Claude 3 Sonnet');
+  // Use the context LLM value directly without a local default
+  const [currentLLM, setCurrentLLM] = useState<LLMModel>(contextLLM);
+  
+  // Update local state when the context value changes
+  useEffect(() => {
+    if (contextLLM && contextLLM !== currentLLM) {
+      console.log(`[LLM Sync] Updating local LLM state from context: ${contextLLM}`);
+      setCurrentLLM(contextLLM);
+    }
+  }, [contextLLM]);
+  
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
@@ -1553,220 +1598,377 @@ const ChatScreen: React.FC = () => {
   
   // Implement ProfilePanel component
   const ProfilePanel = () => {
+    const { userProfile, login, logout } = useChat();
+    
+    const [name, setName] = useState(userProfile.name);
+    const [email, setEmail] = useState(userProfile.email);
+    const [username, setUsername] = useState(userProfile.username);
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    
+    // Login form state
+    const [loginUsername, setLoginUsername] = useState('');
+    const [loginPassword, setLoginPassword] = useState('');
+    const [isLoggingIn, setIsLoggingIn] = useState(false);
+    const [loginError, setLoginError] = useState('');
+    
     const translateY = useRef(new Animated.Value(1000)).current;
     const opacity = useRef(new Animated.Value(0)).current;
     
     useEffect(() => {
       if (profileVisible) {
         Animated.parallel([
+          Animated.timing(translateY, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }),
           Animated.timing(opacity, {
             toValue: 1,
             duration: 300,
             useNativeDriver: true,
           }),
-          Animated.timing(translateY, {
-            toValue: 0,
-            duration: 400,
-            easing: Easing.out(Easing.exp),
-            useNativeDriver: true,
-          }),
         ]).start();
       } else {
         Animated.parallel([
-          Animated.timing(opacity, {
-            toValue: 0,
-            duration: 200,
-            useNativeDriver: true,
-          }),
           Animated.timing(translateY, {
             toValue: 1000,
             duration: 300,
-            easing: Easing.in(Easing.exp),
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 300,
             useNativeDriver: true,
           }),
         ]).start();
       }
     }, [profileVisible]);
     
+    const handleSaveProfile = async () => {
+      setIsSaving(true);
+      
+      // Basic validation
+      if (!name.trim() || !email.trim() || !username.trim()) {
+        Alert.alert('Error', 'Please fill in all required fields');
+        setIsSaving(false);
+        return;
+      }
+      
+      // Password validation if changing password
+      if (newPassword && newPassword !== confirmPassword) {
+        Alert.alert('Error', 'New passwords do not match');
+        setIsSaving(false);
+        return;
+      }
+      
+      try {
+        // Save profile changes
+        await login({
+          ...userProfile,
+          name,
+          email,
+          username,
+        });
+        
+        // Show success message
+        Alert.alert('Success', 'Profile updated successfully');
+        setProfileVisible(false);
+      } catch (error) {
+        console.error('Failed to save profile:', error);
+        Alert.alert('Error', 'Failed to save profile changes');
+      } finally {
+        setIsSaving(false);
+      }
+    };
+    
+    const handleLogout = async () => {
+      try {
+        await logout();
+        setProfileVisible(false);
+        // Additional cleanup or redirect logic can go here
+      } catch (error) {
+        console.error('Logout failed:', error);
+      }
+    };
+    
+    const handleLogin = async () => {
+      setIsLoggingIn(true);
+      setLoginError('');
+      
+      // Basic validation
+      if (!loginUsername.trim() || !loginPassword.trim()) {
+        setLoginError('Please enter both username and password');
+        setIsLoggingIn(false);
+        return;
+      }
+      
+      try {
+        // For demo purposes, accept any login credentials
+        // In a real app, you would call an API to validate credentials
+        await login({
+          id: 'user123',
+          name: 'Demo User',
+          email: `${loginUsername}@example.com`,
+          username: loginUsername,
+          isLoggedIn: true,
+        });
+        
+        // Reset form fields
+        setLoginUsername('');
+        setLoginPassword('');
+        setProfileVisible(false);
+      } catch (error) {
+        console.error('Login failed:', error);
+        setLoginError('Login failed. Please try again.');
+      } finally {
+        setIsLoggingIn(false);
+      }
+    };
+    
+    // Render login form or profile based on login status
+    const renderContent = () => {
+      if (!userProfile.isLoggedIn) {
+        return (
+          <>
+            <View style={styles.profileHeader}>
+              <Avatar.Icon 
+                size={80} 
+                icon="account" 
+                style={{
+                  backgroundColor: isDark ? darkTheme.primary : '#54C6EB',
+                }}
+              />
+              <Text style={[
+                styles.profileTitle, 
+                { color: isDark ? '#f3f4f6' : '#333', marginTop: 16 }
+              ]}>
+                Sign in to your account
+              </Text>
+            </View>
+            
+            <Divider style={styles.profileDivider} />
+            
+            {loginError ? (
+              <Text style={styles.loginError}>{loginError}</Text>
+            ) : null}
+            
+            <View style={styles.loginForm}>
+              <TextInput
+                style={[
+                  styles.profileInput,
+                  { 
+                    backgroundColor: isDark ? darkTheme.surface : '#f9fafb',
+                    borderColor: isDark ? darkTheme.borderLight : '#e5e7eb',
+                    color: isDark ? '#f3f4f6' : '#111827',
+                    marginBottom: 16
+                  }
+                ]}
+                value={loginUsername}
+                onChangeText={setLoginUsername}
+                placeholder="Username"
+                placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                autoCapitalize="none"
+                disabled={isLoggingIn}
+              />
+              
+              <TextInput
+                style={[
+                  styles.profileInput,
+                  { 
+                    backgroundColor: isDark ? darkTheme.surface : '#f9fafb',
+                    borderColor: isDark ? darkTheme.borderLight : '#e5e7eb',
+                    color: isDark ? '#f3f4f6' : '#111827',
+                    marginBottom: 24
+                  }
+                ]}
+                value={loginPassword}
+                onChangeText={setLoginPassword}
+                placeholder="Password"
+                placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                secureTextEntry
+                autoCapitalize="none"
+                disabled={isLoggingIn}
+              />
+              
+              <Button
+                mode="contained"
+                onPress={handleLogin}
+                loading={isLoggingIn}
+                disabled={isLoggingIn}
+                style={{ borderRadius: 8 }}
+                contentStyle={{ height: 48 }}
+                buttonColor={isDark ? darkTheme.primary : '#54C6EB'}
+              >
+                {isLoggingIn ? 'Signing in...' : 'Sign in'}
+              </Button>
+              
+              <Text style={[
+                styles.loginHelpText,
+                { color: isDark ? '#9ca3af' : '#6b7280', marginTop: 24, textAlign: 'center' }
+              ]}>
+                This is a demo app. You can sign in with any username and password.
+              </Text>
+            </View>
+          </>
+        );
+      }
+      
+      return (
+        <>
+          <View style={styles.profileHeader}>
+            <Avatar.Text 
+              size={80} 
+              label={userProfile.name.substring(0, 2)}
+              style={{
+                backgroundColor: isDark ? darkTheme.primary : '#54C6EB',
+              }}
+            />
+            <Text style={[styles.profileName, { color: isDark ? '#f3f4f6' : '#333' }]}>{userProfile.name}</Text>
+            <Text style={[styles.profileEmail, { color: isDark ? '#9ca3af' : '#6b7280' }]}>{userProfile.email}</Text>
+          </View>
+          
+          <Divider style={styles.profileDivider} />
+          
+          {/* Profile form */}
+          <View style={styles.profileInfoRow}>
+            <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Name</Text>
+            <TextInput
+              style={[
+                styles.profileInput,
+                { 
+                  backgroundColor: isDark ? darkTheme.surface : '#f9fafb',
+                  borderColor: isDark ? darkTheme.borderLight : '#e5e7eb',
+                  color: isDark ? '#f3f4f6' : '#111827' 
+                }
+              ]}
+              value={name}
+              onChangeText={setName}
+              placeholder="Enter your name"
+              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+            />
+          </View>
+          
+          <View style={styles.profileInfoRow}>
+            <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Email</Text>
+            <TextInput
+              style={[
+                styles.profileInput,
+                { 
+                  backgroundColor: isDark ? darkTheme.surface : '#f9fafb',
+                  borderColor: isDark ? darkTheme.borderLight : '#e5e7eb',
+                  color: isDark ? '#f3f4f6' : '#111827' 
+                }
+              ]}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Enter your email"
+              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+          
+          <View style={styles.profileInfoRow}>
+            <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Username</Text>
+            <TextInput
+              style={[
+                styles.profileInput,
+                { 
+                  backgroundColor: isDark ? darkTheme.surface : '#f9fafb',
+                  borderColor: isDark ? darkTheme.borderLight : '#e5e7eb',
+                  color: isDark ? '#f3f4f6' : '#111827' 
+                }
+              ]}
+              value={username}
+              onChangeText={setUsername}
+              placeholder="Enter your username"
+              placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              autoCapitalize="none"
+            />
+          </View>
+          
+          <Divider style={[styles.profileDivider, { marginTop: 16, marginBottom: 16 }]} />
+          
+          <View style={styles.profileActions}>
+            <Button
+              mode="contained"
+              onPress={handleSaveProfile}
+              loading={isSaving}
+              disabled={isSaving}
+              style={{ borderRadius: 8, flex: 1, marginRight: 8 }}
+              contentStyle={{ height: 48 }}
+              buttonColor={isDark ? darkTheme.primary : '#54C6EB'}
+            >
+              Save Changes
+            </Button>
+            
+            <Button
+              mode="outlined"
+              onPress={handleLogout}
+              style={{ 
+                borderRadius: 8, 
+                flex: 1, 
+                marginLeft: 8,
+                borderColor: isDark ? darkTheme.error : '#f44336' 
+              }}
+              contentStyle={{ height: 48 }}
+              textColor={isDark ? darkTheme.error : '#f44336'}
+            >
+              Log Out
+            </Button>
+          </View>
+        </>
+      );
+    };
+    
     return (
       <RNModal
+        animationType="none"
+        transparent={true}
         visible={profileVisible}
         onRequestClose={() => setProfileVisible(false)}
-        animationType="none"
-        transparent
       >
-        <Animated.View 
-          style={[
-            styles.modalOverlay,
-            { opacity }
-          ]}
-        >
-          <TouchableOpacity 
-            style={styles.modalTouchable} 
-            activeOpacity={1}
-            onPress={() => setProfileVisible(false)}
+        <TouchableWithoutFeedback onPress={() => setProfileVisible(false)}>
+          <Animated.View 
+            style={[
+              styles.modalOverlay,
+              { opacity },
+              { backgroundColor: isDark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.5)' }
+            ]}
           >
-            <Animated.View
-              style={[
-                styles.settingsPanel,
-                { transform: [{ translateY }] }
-              ]}
-            >
-              <TouchableOpacity 
-                activeOpacity={1} 
-                onPress={(e) => e.stopPropagation()} 
-                style={{flex: 1}}
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <Animated.View 
+                style={[
+                  styles.settingsPanel,
+                  { 
+                    transform: [{ translateY }],
+                    backgroundColor: isDark ? darkTheme.surfaceElevated : '#fff',
+                    borderColor: isDark ? darkTheme.border : '#e5e7eb'
+                  }
+                ]}
               >
                 <View style={styles.settingsHeader}>
-                  <Text style={styles.settingsPanelTitle}>Profile</Text>
+                  <Text style={styles.settingsPanelTitle}>
+                    {userProfile.isLoggedIn ? 'Profile' : 'Sign In'}
+                  </Text>
                   <IconButton
                     icon="close"
                     size={24}
                     onPress={() => setProfileVisible(false)}
-                    style={styles.settingsCloseButton}
-                    iconColor="#54C6EB"
+                    iconColor={isDark ? '#f3f4f6' : '#374151'}
                   />
                 </View>
                 
-                {/* Fixed height content container with scrolling */}
-                <View style={styles.settingsContentWrapper}>
-                  <ScrollView 
-                    style={styles.settingsContent}
-                    contentContainerStyle={styles.settingsContentContainer}
-                    showsVerticalScrollIndicator={true}
-                  >
-                    <View style={styles.profileHeader}>
-                      <Avatar.Icon 
-                        size={100} 
-                        icon="account" 
-                        color="#fff" 
-                        style={[
-                          styles.profileAvatar,
-                          isDark && { backgroundColor: darkTheme.primaryDark }
-                        ]} 
-                      />
-                      <Text style={[styles.profileName, { color: isDark ? '#f3f4f6' : '#333' }]}>John Doe</Text>
-                      <Text style={[styles.profileEmail, { color: isDark ? '#9ca3af' : '#6b7280' }]}>john.doe@example.com</Text>
-                    </View>
-                    
-                    <Divider style={styles.profileDivider} />
-                    
-                    <View style={styles.settingsSection}>
-                      <Text style={[styles.settingsSectionTitle, { color: isDark ? '#f3f4f6' : '#54C6EB' }]}>Personal Information</Text>
-                      
-                      <View style={styles.profileInfoRow}>
-                        <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Name</Text>
-                        <TextInput 
-                          style={[
-                            styles.profileInput,
-                            isDark && {
-                              borderColor: darkTheme.borderLight,
-                              backgroundColor: darkTheme.surfaceElevated,
-                              color: darkTheme.text,
-                            }
-                          ]}
-                          value="John Doe"
-                          placeholder="Enter your name"
-                        />
-                      </View>
-                      
-                      <View style={styles.profileInfoRow}>
-                        <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Email</Text>
-                        <TextInput 
-                          style={[
-                            styles.profileInput,
-                            isDark && {
-                              borderColor: darkTheme.borderLight,
-                              backgroundColor: darkTheme.surfaceElevated,
-                              color: darkTheme.text,
-                            }
-                          ]}
-                          value="john.doe@example.com"
-                          placeholder="Enter your email"
-                          keyboardType="email-address"
-                        />
-                      </View>
-                      
-                      <View style={styles.profileInfoRow}>
-                        <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Username</Text>
-                        <TextInput 
-                          style={[
-                            styles.profileInput,
-                            isDark && {
-                              borderColor: darkTheme.borderLight,
-                              backgroundColor: darkTheme.surfaceElevated,
-                              color: darkTheme.text,
-                            }
-                          ]}
-                          value="johndoe"
-                          placeholder="Enter your username"
-                        />
-                      </View>
-                    </View>
-                    
-                    <View style={styles.settingsSection}>
-                      <Text style={[styles.settingsSectionTitle, { color: isDark ? '#f3f4f6' : '#54C6EB' }]}>Password</Text>
-                      
-                      <View style={styles.profileInfoRow}>
-                        <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Current Password</Text>
-                        <TextInput 
-                          style={[
-                            styles.profileInput,
-                            isDark && {
-                              borderColor: darkTheme.borderLight,
-                              backgroundColor: darkTheme.surfaceElevated,
-                              color: darkTheme.text,
-                            }
-                          ]}
-                          placeholder="Enter current password"
-                          secureTextEntry
-                        />
-                      </View>
-                      
-                      <View style={styles.profileInfoRow}>
-                        <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>New Password</Text>
-                        <TextInput 
-                          style={[
-                            styles.profileInput,
-                            isDark && {
-                              borderColor: darkTheme.borderLight,
-                              backgroundColor: darkTheme.surfaceElevated,
-                              color: darkTheme.text,
-                            }
-                          ]}
-                          placeholder="Enter new password"
-                          secureTextEntry
-                        />
-                      </View>
-                      
-                      <View style={styles.profileInfoRow}>
-                        <Text style={[styles.profileLabel, { color: isDark ? '#e5e7eb' : '#333' }]}>Confirm Password</Text>
-                        <TextInput 
-                          style={[
-                            styles.profileInput,
-                            isDark && {
-                              borderColor: darkTheme.borderLight,
-                              backgroundColor: darkTheme.surfaceElevated,
-                              color: darkTheme.text,
-                            }
-                          ]}
-                          placeholder="Confirm new password"
-                          secureTextEntry
-                        />
-                      </View>
-                    </View>
-                    
-                    <View style={styles.profileButtonContainer}>
-                      <TouchableOpacity style={styles.saveButton}>
-                        <Text style={[styles.saveButtonText, { color: isDark ? '#f3f4f6' : '#333' }]}>Save Changes</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </ScrollView>
-                </View>
-              </TouchableOpacity>
-            </Animated.View>
-          </TouchableOpacity>
-        </Animated.View>
+                <ScrollView style={styles.settingsContent}>
+                  {renderContent()}
+                </ScrollView>
+              </Animated.View>
+            </TouchableWithoutFeedback>
+          </Animated.View>
+        </TouchableWithoutFeedback>
       </RNModal>
     );
   };
@@ -1809,32 +2011,16 @@ const ChatScreen: React.FC = () => {
   const handleSend = () => {
     if (!currentMessage.trim()) return;
     
-    // Add user message
-    const userMessage: Message = {
-      text: currentMessage,
-      sender: 'user',
-      timestamp: Date.now()
-    };
+    // Call the sendMessage function from ChatContext
+    sendMessage(currentMessage);
     
-    setMessages(prev => [...prev, userMessage]);
+    // Clear the input field
     setCurrentMessage('');
     
-    // Simulate AI response with the current LLM model
-    setIsTyping(true);
+    // Auto-scroll to the bottom after a short delay to ensure the message is rendered
     setTimeout(() => {
-      const aiMessage: Message = {
-        text: `I'm currently running ${currentLLM}. This is a simulated response to: "${currentMessage}"`,
-        sender: 'ai',
-        timestamp: Date.now()
-      };
-      setMessages(prev => [...prev, aiMessage]);
-      setIsTyping(false);
-      
-      // Auto-scroll to the new message
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    }, 1500);
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 300);
   };
   
   return (
@@ -1880,7 +2066,7 @@ const ChatScreen: React.FC = () => {
                   <Text style={[
                     styles.accountName,
                     { color: isDark ? '#f3f4f6' : '#333' }
-                  ]} numberOfLines={1}>John Doe</Text>
+                  ]} numberOfLines={1}>{userProfile.isLoggedIn ? userProfile.name : 'Guest'}</Text>
                 </Animated.View>
               </View>
             </Pressable>
@@ -1922,6 +2108,31 @@ const ChatScreen: React.FC = () => {
             onPress={() => {
               console.log('Logout selected');
               setAccountMenuVisible(false);
+              
+              // Show confirmation dialog
+              Alert.alert(
+                'Logout',
+                'Are you sure you want to logout? Your settings and preferences will be preserved.',
+                [
+                  {
+                    text: 'Cancel',
+                    style: 'cancel'
+                  },
+                  {
+                    text: 'Logout',
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        await logout();
+                        // Additional logout actions can go here
+                      } catch (error) {
+                        console.error('Logout failed:', error);
+                        Alert.alert('Error', 'Failed to logout. Please try again.');
+                      }
+                    }
+                  }
+                ]
+              );
             }}
             title="Logout"
             titleStyle={styles.menuItemTitle}
@@ -2972,7 +3183,7 @@ const styles = StyleSheet.create({
     padding: 5,
     overflow: 'hidden',
   },
-  dropdownItem: {
+  llmDropdownItem: {
     padding: 12,
     borderRadius: 8,
     marginVertical: 2,
@@ -3014,6 +3225,55 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#4f46e5',
     fontWeight: '500',
+  },
+  button: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    minWidth: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButton: {
+    borderWidth: 1,
+    marginRight: 16,
+  },
+  logoutButton: {
+    width: '100%',
+    marginTop: 40,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sectionHeader: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 16,
+    paddingHorizontal: 16,
+  },
+  // Add these new styles for the login functionality
+  loginForm: {
+    padding: 16,
+  },
+  loginError: {
+    color: '#f44336',
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  loginHelpText: {
+    fontSize: 14,
+  },
+  profileTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  profileActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    marginBottom: 24,
   },
 });
 

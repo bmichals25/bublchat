@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { Conversation, ChatContextType, Message, LLMModel, LLMOption } from '../types';
 import { generateId, createNewConversationTitle } from '../utils/helpers';
+import { callLLM } from '../utils/api';
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
@@ -67,100 +69,195 @@ const getMockResponse = (message: string): string => {
   return responses[Math.floor(Math.random() * responses.length)];
 };
 
+// Mock user profile for demonstration
+const MOCK_USER_PROFILE = {
+  id: 'user123',
+  name: 'John Doe',
+  email: 'john.doe@example.com',
+  username: 'johndoe',
+  isLoggedIn: false, // Default to not logged in
+};
+
 export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [currentLLM, setCurrentLLM] = useState<LLMModel>('Claude 3 Opus');
   const [llmOptions, setLlmOptions] = useState<LLMOption[]>(DEFAULT_LLM_OPTIONS);
+  // Replace messageAborted with abortController ref
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // Add user profile state with default not logged in
+  const [userProfile, setUserProfile] = useState(MOCK_USER_PROFILE);
+  // Add loading state for initial app load
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
 
-  // Load conversations and settings from AsyncStorage on initial load
+  // Helper function to get storage keys with user ID prefix
+  const getUserStorageKey = (key: string) => {
+    return userProfile.isLoggedIn 
+      ? `user_${userProfile.id}_${key}` 
+      : key;
+  };
+
+  // Save data to appropriate storage based on platform
+  const saveToStorage = async (key: string, data: any) => {
+    const userKey = getUserStorageKey(key);
+    console.log(`Saving to storage: ${userKey}`);
+    
+    try {
+      const jsonValue = JSON.stringify(data);
+      // Use localStorage in web environment, AsyncStorage otherwise
+      if (Platform.OS === 'web') {
+        localStorage.setItem(userKey, jsonValue);
+      }
+      await AsyncStorage.setItem(userKey, jsonValue);
+    } catch (error) {
+      console.error(`Failed to save ${key}:`, error);
+    }
+  };
+
+  // Load data from appropriate storage based on platform
+  const loadFromStorage = async (key: string, defaultValue: any = null) => {
+    const userKey = getUserStorageKey(key);
+    console.log(`Loading from storage: ${userKey}`);
+    
+    try {
+      // First try localStorage in web environment
+      if (Platform.OS === 'web') {
+        const value = localStorage.getItem(userKey);
+        if (value) {
+          console.log(`Found ${key} in localStorage`);
+          return JSON.parse(value);
+        }
+      }
+      
+      // Then try AsyncStorage
+      const value = await AsyncStorage.getItem(userKey);
+      if (value) {
+        console.log(`Found ${key} in AsyncStorage`);
+        return JSON.parse(value);
+      }
+      
+      console.log(`No stored value found for ${key}, using default`);
+      return defaultValue;
+    } catch (error) {
+      console.error(`Failed to load ${key}:`, error);
+      return defaultValue;
+    }
+  };
+
+  // Load user profile on initial app load
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      try {
+        setIsInitialLoading(true);
+        const storedUserProfile = await AsyncStorage.getItem('userProfile');
+        
+        if (storedUserProfile) {
+          const parsedProfile = JSON.parse(storedUserProfile);
+          console.log('Loaded user profile from storage:', parsedProfile.username);
+          setUserProfile(parsedProfile);
+        } else {
+          console.log('No stored user profile found, using default');
+          // Ensure we're not logged in by default
+          setUserProfile({...MOCK_USER_PROFILE, isLoggedIn: false});
+        }
+      } catch (error) {
+        console.error('Failed to load user profile:', error);
+      } finally {
+        setIsInitialLoading(false);
+      }
+    };
+    
+    loadUserProfile();
+  }, []);
+
+  // Load conversations and settings from storage on initial load or when user changes
   useEffect(() => {
     const loadData = async () => {
       try {
-        const storedConversations = await AsyncStorage.getItem('conversations');
-        const storedCurrentId = await AsyncStorage.getItem('currentConversationId');
-        const storedLLM = await AsyncStorage.getItem('currentLLM');
-        const storedLlmOptions = await AsyncStorage.getItem('llmOptions');
+        // Load data with user-specific keys
+        const storedConversations = await loadFromStorage('conversations', []);
+        const storedCurrentId = await loadFromStorage('currentConversationId', null);
+        const storedLLM = await loadFromStorage('currentLLM', 'Claude 3 Opus');
+        const storedLlmOptions = await loadFromStorage('llmOptions', DEFAULT_LLM_OPTIONS);
         
-        if (storedConversations) {
-          setConversations(JSON.parse(storedConversations));
-        }
+        // Update state with the loaded values
+        setConversations(storedConversations);
+        setCurrentConversationId(storedCurrentId);
+        console.log(`[LLM Persistence] Loading LLM from storage: ${storedLLM}`);
+        setCurrentLLM(storedLLM);
+        setLlmOptions(storedLlmOptions);
         
-        if (storedCurrentId) {
-          setCurrentConversationId(storedCurrentId);
-        }
-
-        if (storedLLM) {
-          setCurrentLLM(JSON.parse(storedLLM) as LLMModel);
-        }
-        
-        // Handle LLM options loading
-        if (storedLlmOptions) {
-          try {
-            const parsedOptions = JSON.parse(storedLlmOptions);
-            // Always use stored options, even if array is empty
-            // This ensures deleted models stay deleted
-            setLlmOptions(parsedOptions);
-          } catch (e) {
-            console.error('Error parsing stored LLM options:', e);
-            // Only use defaults on parsing error
-            setLlmOptions(DEFAULT_LLM_OPTIONS);
-          }
-        } else {
-          // First time loading (no saved options yet) - use defaults
-          setLlmOptions(DEFAULT_LLM_OPTIONS);
-        }
+        console.log('User data loaded successfully for', userProfile.username);
       } catch (error) {
         console.error('Failed to load data:', error);
       }
     };
     
-    loadData();
-  }, []);
+    // Only load data once the user profile is loaded
+    if (!isInitialLoading) {
+      loadData();
+    }
+  }, [userProfile.id, userProfile.isLoggedIn, isInitialLoading]);
 
-  // Save conversations and settings to AsyncStorage whenever they change
+  // Save conversations whenever they change
   useEffect(() => {
-    const saveConversations = async () => {
-      try {
-        await AsyncStorage.setItem('conversations', JSON.stringify(conversations));
-        
-        if (currentConversationId) {
-          await AsyncStorage.setItem('currentConversationId', currentConversationId);
-        }
-      } catch (error) {
-        console.error('Failed to save conversations:', error);
-      }
-    };
-    
-    saveConversations();
-  }, [conversations, currentConversationId]);
+    saveToStorage('conversations', conversations);
+    if (currentConversationId) {
+      saveToStorage('currentConversationId', currentConversationId);
+    }
+  }, [conversations, currentConversationId, userProfile.id]);
 
-  // Save current LLM to AsyncStorage when it changes
+  // Save current LLM to storage when it changes
   useEffect(() => {
-    const saveLLM = async () => {
-      try {
-        await AsyncStorage.setItem('currentLLM', JSON.stringify(currentLLM));
-      } catch (error) {
-        console.error('Failed to save LLM setting:', error);
-      }
-    };
-    
-    saveLLM();
-  }, [currentLLM]);
+    console.log(`[LLM Persistence] Saving LLM to storage: ${currentLLM}`);
+    saveToStorage('currentLLM', currentLLM);
+  }, [currentLLM, userProfile.id]);
   
-  // Save LLM options to AsyncStorage when they change
+  // Save LLM options to storage when they change
   useEffect(() => {
-    const saveLlmOptions = async () => {
-      try {
-        await AsyncStorage.setItem('llmOptions', JSON.stringify(llmOptions));
-      } catch (error) {
-        console.error('Failed to save LLM options:', error);
-      }
-    };
+    saveToStorage('llmOptions', llmOptions);
+  }, [llmOptions, userProfile.id]);
+
+  // User login/logout functions
+  const login = async (userData: typeof MOCK_USER_PROFILE) => {
+    const loggedInUser = {...userData, isLoggedIn: true};
+    setUserProfile(loggedInUser);
     
-    saveLlmOptions();
-  }, [llmOptions]);
+    // Save user profile to storage for persistence
+    try {
+      await AsyncStorage.setItem('userProfile', JSON.stringify(loggedInUser));
+      console.log('User profile saved to storage:', loggedInUser.username);
+    } catch (error) {
+      console.error('Failed to save user profile:', error);
+    }
+    
+    // Load user-specific data after login
+    console.log('User logged in:', userData.username);
+  };
+  
+  const logout = async () => {
+    console.log('User logged out');
+    
+    // Clear user-specific data from state
+    setConversations([]);
+    setCurrentConversationId(null);
+    setCurrentLLM('Claude 3 Opus');
+    setLlmOptions(DEFAULT_LLM_OPTIONS);
+    
+    // Update user profile state to logged out
+    const loggedOutUser = {...MOCK_USER_PROFILE, isLoggedIn: false};
+    setUserProfile(loggedOutUser);
+    
+    // Save logged out state to storage
+    try {
+      await AsyncStorage.setItem('userProfile', JSON.stringify(loggedOutUser));
+      console.log('Logged out user profile saved to storage');
+    } catch (error) {
+      console.error('Failed to save logged out user profile:', error);
+    }
+  };
 
   const createNewConversation = () => {
     const newId = generateId();
@@ -231,9 +328,12 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         setCurrentLLM('No Models Available');
       }
     }
+    
+    // Explicitly save the updated options to storage
+    saveToStorage('llmOptions', updatedOptions);
   };
 
-  const sendMessage = (content: string) => {
+  const sendMessage = async (content: string) => {
     if (!currentConversationId || !content.trim()) return;
     
     // Create user message
@@ -259,34 +359,96 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
       )
     );
     
-    // Simulate AI thinking
+    // Create a new AbortController for this request
+    abortControllerRef.current = new AbortController();
+    // Set loading state
     setIsLoading(true);
     
-    // Generate mock response after a delay (include the LLM model info)
-    setTimeout(() => {
-      // We can include the selected LLM in the response for demonstration
-      const modelPrefix = `Using ${currentLLM}: `;
-      const aiMessage: Message = {
-        id: generateId(),
-        content: modelPrefix + getMockResponse(content),
-        role: 'assistant',
-        timestamp: Date.now(),
-      };
+    try {
+      // Get the system prompt from storage
+      const systemPrompt = await AsyncStorage.getItem('systemPrompt') || 'You are a helpful assistant named bubl.';
+
+      // Get conversation history for context
+      const currentConversation = conversations.find(c => c.id === currentConversationId);
+      const conversationHistory = currentConversation?.messages || [];
       
-      setConversations(prevConversations => 
-        prevConversations.map(conv => 
-          conv.id === currentConversationId
-            ? { 
-                ...conv, 
-                messages: [...conv.messages, aiMessage],
-                updatedAt: Date.now() 
-              }
-            : conv
-        )
-      );
+      // Format conversation history as a single string for context
+      let conversationContext = '';
+      if (conversationHistory.length > 0) {
+        // Include last few messages for context (limited to avoid token limits)
+        const contextMessages = conversationHistory.slice(-6);
+        conversationContext = contextMessages.map(msg => 
+          `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+        ).join('\n\n');
+        
+        // Add the current message
+        conversationContext += `\n\nUser: ${content}`;
+      } else {
+        conversationContext = `User: ${content}`;
+      }
       
+      // Call the LLM API with the AbortController
+      const response = await callLLM({
+        model: currentLLM,
+        prompt: conversationContext,
+        systemPrompt,
+        abortController: abortControllerRef.current
+      });
+      
+      // Only add the response if it's not empty (empty indicates aborted)
+      if (response.text) {
+        // Create AI message with the response
+        const aiMessage: Message = {
+          id: generateId(),
+          content: response.text,
+          role: 'assistant',
+          timestamp: Date.now(),
+        };
+        
+        // Update conversation with AI response
+        setConversations(prevConversations => 
+          prevConversations.map(conv => 
+            conv.id === currentConversationId
+              ? { 
+                  ...conv, 
+                  messages: [...conv.messages, aiMessage],
+                  updatedAt: Date.now() 
+                }
+              : conv
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Error calling LLM API:', error);
+      
+      // Only add error message if not explicitly aborted
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        // Create error message
+        const errorMessage: Message = {
+          id: generateId(),
+          content: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+          role: 'assistant',
+          timestamp: Date.now(),
+        };
+        
+        // Update conversation with error message
+        setConversations(prevConversations => 
+          prevConversations.map(conv => 
+            conv.id === currentConversationId
+              ? { 
+                  ...conv, 
+                  messages: [...conv.messages, errorMessage],
+                  updatedAt: Date.now() 
+                }
+              : conv
+          )
+        );
+      }
+    } finally {
+      // Clear the AbortController reference and reset loading state
+      abortControllerRef.current = null;
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const deleteConversation = (id: string) => {
@@ -345,6 +507,15 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
     );
   };
 
+  // Update stopMessageGeneration to abort the request
+  const stopMessageGeneration = () => {
+    if (isLoading && abortControllerRef.current) {
+      // Abort the fetch request
+      abortControllerRef.current.abort();
+      setIsLoading(false);
+    }
+  };
+
   return (
     <ChatContext.Provider
       value={{
@@ -353,6 +524,7 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         isLoading,
         currentLLM,
         llmOptions,
+        userProfile,
         createNewConversation,
         switchConversation,
         sendMessage,
@@ -363,6 +535,9 @@ export const ChatProvider: React.FC<{children: React.ReactNode}> = ({ children }
         addLLMOption,
         editLLMOption,
         deleteLLMOption,
+        login,
+        logout,
+        stopMessageGeneration
       }}
     >
       {children}
