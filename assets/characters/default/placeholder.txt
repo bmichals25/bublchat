@@ -1,0 +1,13 @@
+Place your character images here:
+
+1. base.png - Character with eyes open
+   This should show the full character with a neutral expression and eyes open.
+
+2. blink.png - Character with eyes closed
+   This should be identical to base.png but with the character's eyes closed.
+
+Both images should be PNG files with transparency and should have the same dimensions as your viseme images in the visemes/ directory.
+
+The mouth region in these images will be overlaid with the appropriate viseme mouth shape during speech.
+
+See the README.md in the parent directory for more details. 

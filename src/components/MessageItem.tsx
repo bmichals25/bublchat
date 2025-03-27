@@ -6,6 +6,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { speakText, stopSpeech } from '../utils/tts';
 import { useChat } from '../context/ChatContext';
 import ProgressiveText from './ProgressiveText';
+import LipSync from './CharacterAvatar/LipSync';
 
 // Define refined dark mode colors for MessageItem to match Chat screen
 const darkThemeDefaults = {
@@ -42,6 +43,9 @@ const MessageItem: React.FC<MessageItemProps> = ({
   const hasPlayedRef = useRef(false);
   const playbackInitiatedRef = useRef(false);
   const [showContent, setShowContent] = useState(isUser); // Only show user content immediately
+  const [isExpanded, setIsExpanded] = useState<boolean>(true);
+  const windowDimensions = useWindowDimensions();
+  const isMobile = windowDimensions.width < 768;
   
   // Clean up on unmount
   useEffect(() => {
@@ -76,36 +80,28 @@ const MessageItem: React.FC<MessageItemProps> = ({
         !message.isLoading && message.content && !playbackInitiatedRef.current) {
       console.log('[MessageItem] Auto-playing message:', message.id);
       playbackInitiatedRef.current = true; // Mark that we've initiated playback
-      handlePlay(true);
+      handlePlay();
     }
   }, [isUser, isLatestAIMessage, isTTSEnabled, message.isLoading, message.content, message.id]);
   
-  const handlePlay = async (autoPlay = false) => {
-    console.log('[MessageItem] handlePlay called, autoPlay:', autoPlay, 'for message:', message.id);
+  const handlePlay = async () => {
+    console.log('[MessageItem] handlePlay called for message:', message.id);
     
-    // If already playing, stop it
     if (isPlaying && sound) {
       console.log('[MessageItem] Stopping current playback for message:', message.id);
-      await sound.stopAsync();
+      await stopSpeech();
       setIsPlaying(false);
       setSound(null);
       return;
     }
     
-    // Don't play if the message is loading
-    if (message.isLoading) {
-      console.log('[MessageItem] Message is loading, not playing:', message.id);
-      return;
-    }
+    setShowContent(false); // Hide content initially while TTS loads
     
     try {
-      // First, stop any currently playing audio
-      console.log('[MessageItem] Stopping any existing speech before playing message:', message.id);
-      await stopSpeech();
-      
       console.log('[MessageItem] Starting TTS for message:', message.id);
       const result = await speakText({
         text: message.content,
+        detailed_metadata: true // Request detailed metadata for lip-sync
       });
       
       if (!result.sound) {
@@ -117,7 +113,7 @@ const MessageItem: React.FC<MessageItemProps> = ({
       setAlignmentData(result.alignmentData);
       setIsPlaying(true);
       setIsComplete(false);
-      setShowContent(true); // Show content when playback starts
+      setShowContent(true); // Show content once TTS is loaded
       hasPlayedRef.current = true;
       
       // Set up handler for when audio finishes
@@ -144,47 +140,50 @@ const MessageItem: React.FC<MessageItemProps> = ({
   const handleComplete = () => {
     console.log('[MessageItem] Text playback complete for message:', message.id);
     setIsComplete(true);
+    setIsPlaying(false);
+    setSound(null);
   };
 
   return (
     <View style={[
       styles.container,
       isUser ? styles.userContainer : styles.aiContainer,
+      isDarkMode && isUser ? { backgroundColor: darkThemeColors.userBubble } : null,
+      isDarkMode && !isUser ? { backgroundColor: darkThemeColors.surfaceElevated } : null
     ]}>
-      <View style={[
-        styles.messageWrapper,
-        isUser ? styles.userMessageWrapper : styles.aiMessageWrapper,
-        { maxWidth: dimensions.width > 600 ? '70%' : '85%' }
-      ]}>
-        <View style={[
-          styles.messageBubble,
-          isUser 
-            ? [
-                styles.userMessage,
-                isDarkMode && { 
-                  backgroundColor: darkThemeColors.primary,
-                  shadowOpacity: 0.15,
-                }
-              ] 
-            : [
-                styles.aiMessage,
-                isDarkMode && { 
-                  backgroundColor: darkThemeColors.surfaceElevated,
-                  borderColor: darkThemeColors.border,
-                  borderWidth: 1,
-                  shadowOpacity: 0.15, 
-                }
-              ],
+      <View style={styles.messageHeader}>
+        <Text style={[
+          styles.roleBadge,
+          isUser ? styles.userBadge : styles.aiBadge,
+          isDarkMode && !isUser ? { color: darkThemeColors.primary } : null,
+          isDarkMode && isUser ? { color: isDarkMode ? darkThemeColors.text : '#333' } : null
         ]}>
-          {/* Only show content if it's a user message or if we explicitly set showContent for AI messages */}
+          {isUser ? 'You' : 'AI'}
+        </Text>
+        
+        <TouchableOpacity
+          onPress={() => setIsExpanded(!isExpanded)}
+          style={styles.expandButton}
+        >
+          <MaterialIcons
+            name={isExpanded ? "expand-less" : "expand-more"}
+            size={20}
+            color={isDarkMode ? darkThemeColors.textTertiary : '#6b7280'}
+          />
+        </TouchableOpacity>
+      </View>
+      
+      {isExpanded && (
+        <View style={styles.messageContent}>
           {showContent ? (
             <>
-              {/* Show progressive text for AI messages that are currently being played */}
+              {/* Show lip-sync character for AI messages that are currently being played */}
               {!isUser && isPlaying && sound && alignmentData ? (
-                <ProgressiveText
+                <LipSync
                   text={message.content}
                   sound={sound}
                   alignmentData={alignmentData}
+                  characterSize={150}
                   textColor={isDarkMode ? darkThemeColors.text : '#111827'}
                   fontSize={16}
                   isDark={isDarkMode}
@@ -226,14 +225,7 @@ const MessageItem: React.FC<MessageItemProps> = ({
             </TouchableOpacity>
           )}
         </View>
-        <Text style={[
-          styles.timestamp,
-          isUser ? styles.userTimestamp : styles.aiTimestamp,
-          isDarkMode && { color: darkThemeColors.textTertiary }
-        ]}>
-          {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </Text>
-      </View>
+      )}
     </View>
   );
 };
@@ -322,7 +314,28 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 1,
-  }
+  },
+  messageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+  },
+  roleBadge: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  userBadge: {
+    color: '#ffffff',
+  },
+  aiBadge: {
+    color: '#111827',
+  },
+  expandButton: {
+    padding: 4,
+  },
+  messageContent: {
+    padding: 8,
+  },
 });
 
 export default MessageItem; 

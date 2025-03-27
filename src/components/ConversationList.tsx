@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { View, FlatList, StyleSheet, Text, TouchableOpacity, Alert, TextInput, Platform, Image } from 'react-native';
+import { View, FlatList, StyleSheet, Text, TouchableOpacity, Alert, TextInput, Platform, Image, ScrollView } from 'react-native';
 import { Button, IconButton, Divider, Menu } from 'react-native-paper';
 import { Conversation } from '../types';
 import { useChat } from '../context/ChatContext';
 import { formatDate, getMessagePreview } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
+import Icon from 'react-native-vector-icons/MaterialIcons';
+import CharacterAvatar from './CharacterAvatar';
+import CharacterDisplay from './CharacterDisplay';
 
 // Define dark theme colors to match the main screen
 const darkThemeDefaults = {
@@ -228,7 +231,11 @@ const ConversationItem: React.FC<ConversationItemProps> = ({
   );
 };
 
-const ConversationList: React.FC = () => {
+interface ConversationListProps {
+  isCollapsed?: boolean;
+}
+
+const ConversationList: React.FC<ConversationListProps> = ({ isCollapsed = false }) => {
   const { 
     conversations, 
     currentConversationId, 
@@ -281,92 +288,104 @@ const ConversationList: React.FC = () => {
         />
       </View>
       
-      <Button 
-        mode="contained" 
-        icon="plus" 
-        onPress={createNewConversation}
-        style={[
-          styles.newChatButton,
-          isDark && {
-            backgroundColor: darkTheme.primary,
-          }
-        ]}
-        labelStyle={styles.newChatButtonLabel}
-      >
-        New Chat
-      </Button>
+      {!isCollapsed && (
+        <Button 
+          mode="contained" 
+          icon="plus" 
+          onPress={createNewConversation}
+          style={[
+            styles.newChatButton,
+            isDark && {
+              backgroundColor: darkTheme.primary,
+            }
+          ]}
+          labelStyle={styles.newChatButtonLabel}
+        >
+          New Chat
+        </Button>
+      )}
       
-      {conversations.length > 0 ? (
-        <>
-          <View style={styles.listHeader}>
-            <Text style={[
-              styles.listTitle,
-              isDark && {
-                color: darkTheme.text
-              }
-            ]}>
-              Recent conversations
-            </Text>
-            {conversations.length > 1 && (
-              <TouchableOpacity onPress={handleClearAll}>
+      {!isCollapsed && (
+        <View style={styles.conversationsContainer}>
+          {conversations.length > 0 ? (
+            <>
+              <View style={styles.listHeader}>
                 <Text style={[
-                  styles.clearAllText,
+                  styles.listTitle,
                   isDark && {
-                    color: darkTheme.textSecondary
+                    color: darkTheme.text
                   }
                 ]}>
-                  Clear all
+                  Recent conversations
                 </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          
-          <FlatList
-            data={conversations}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <ConversationItem
-                conversation={item}
-                isActive={item.id === currentConversationId}
-                onPress={() => switchConversation(item.id)}
-                isDarkMode={isDark}
-                darkThemeColors={darkTheme}
+                {conversations.length > 1 && (
+                  <TouchableOpacity onPress={handleClearAll}>
+                    <Text style={[
+                      styles.clearAllText,
+                      isDark && {
+                        color: darkTheme.textSecondary
+                      }
+                    ]}>
+                      Clear all
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              
+              <FlatList
+                data={conversations}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <ConversationItem
+                    conversation={item}
+                    isActive={item.id === currentConversationId}
+                    onPress={() => switchConversation(item.id)}
+                    isDarkMode={isDark}
+                    darkThemeColors={darkTheme}
+                  />
+                )}
+                ItemSeparatorComponent={() => (
+                  <Divider style={isDark ? { backgroundColor: darkTheme.border } : {}} />
+                )}
+                style={styles.list}
               />
-            )}
-            ItemSeparatorComponent={() => (
-              <Divider style={isDark ? { backgroundColor: darkTheme.border } : {}} />
-            )}
-            style={styles.list}
-          />
-        </>
-      ) : (
-        <View style={[
-          styles.emptyState,
-          isDark && {
-            backgroundColor: 'rgba(30, 30, 30, 0.5)',
-            borderRadius: 12,
-            marginTop: 20,
-            padding: 30
-          }
-        ]}>
-          <Text style={[
-            styles.emptyStateTitle,
-            isDark && {
-              color: darkTheme.text
-            }
-          ]}>
-            No conversations yet
-          </Text>
-          <Text style={[
-            styles.emptyStateSubtitle,
-            isDark && {
-              color: darkTheme.textSecondary
-            }
-          ]}>
-            Start a new conversation to begin chatting with bubl
-          </Text>
+            </>
+          ) : (
+            <View style={[
+              styles.emptyState,
+              isDark && {
+                backgroundColor: 'rgba(30, 30, 30, 0.5)',
+                borderRadius: 12,
+                marginTop: 20,
+                padding: 30
+              }
+            ]}>
+              <Text style={[
+                styles.emptyStateTitle,
+                isDark && {
+                  color: darkTheme.text
+                }
+              ]}>
+                No conversations yet
+              </Text>
+              <Text style={[
+                styles.emptyStateSubtitle,
+                isDark && {
+                  color: darkTheme.textSecondary
+                }
+              ]}>
+                Start a new conversation to begin chatting with bubl
+              </Text>
+            </View>
+          )}
         </View>
       )}
+      
+      {/* Character display at the bottom */}
+      <CharacterDisplay 
+        isCollapsed={isCollapsed} 
+        size={Number(isCollapsed ? 80 : 400)} 
+      />
     </View>
   );
 };
@@ -377,6 +396,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#e6f7ff',
     borderRightWidth: 0,
     paddingHorizontal: 16,
+    display: 'flex',
+    flexDirection: 'column',
   },
   header: {
     paddingVertical: 24,
@@ -407,6 +428,10 @@ const styles = StyleSheet.create({
   newChatButtonLabel: {
     fontSize: 16,
   },
+  conversationsContainer: {
+    flex: 1,
+    overflow: 'hidden',
+  },
   listHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -421,6 +446,21 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
+  },
+  characterContainer: {
+    width: '100%',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0, 0, 0, 0.1)',
+    paddingTop: 10,
+    marginTop: 10,
+  },
+  characterContainerCollapsed: {
+    marginTop: 'auto',
+    position: 'absolute',
+    bottom: 20,
+    left: 0,
+    right: 0,
+    borderTopWidth: 0,
   },
   conversationItem: {
     flexDirection: 'row',
@@ -456,6 +496,9 @@ const styles = StyleSheet.create({
   conversationDate: {
     fontSize: 12,
     color: '#9ca3af',
+  },
+  activeConversationText: {
+    color: '#fff',
   },
   emptyState: {
     padding: 24,
@@ -504,9 +547,6 @@ const styles = StyleSheet.create({
   menuContainer: {
     position: 'relative',
     zIndex: 1000,
-  },
-  activeConversationText: {
-    color: '#fff',
   },
   menuContent: {
     backgroundColor: '#fff',

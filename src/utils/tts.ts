@@ -15,6 +15,7 @@ interface TTSOptions {
   style?: number;
   use_speaker_boost?: boolean;
   abortController?: AbortController;
+  detailed_metadata?: boolean; // Add option for detailed phoneme metadata
 }
 
 // Get the ElevenLabs API key from AsyncStorage
@@ -108,7 +109,8 @@ export const speakText = async (options: TTSOptions): Promise<{
     similarity_boost,
     style = 0,
     use_speaker_boost,
-    abortController = new AbortController()
+    abortController = new AbortController(),
+    detailed_metadata = true // Default to true for lip-sync support
   } = options;
   
   // Get stored voice settings from AsyncStorage if not provided in options
@@ -147,8 +149,130 @@ export const speakText = async (options: TTSOptions): Promise<{
   await stopSpeech();
   
   try {
-    // First try the with-timestamps endpoint
-    console.log('[TTS] Making API request to ElevenLabs with-timestamps endpoint');
+    // First try the detailed metadata endpoint for phoneme-level lip-sync
+    if (detailed_metadata) {
+      console.log('[TTS] Making API request to ElevenLabs streaming endpoint with detailed metadata');
+      const streamingUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voice}/stream-input`;
+      
+      // Create the initial request
+      const initialResponse = await fetch(streamingUrl, {
+        method: 'POST',
+        headers: {
+          'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model_id: model,
+          voice_settings: {
+            stability: finalStability,
+            similarity_boost: finalSimilarityBoost,
+            style,
+            use_speaker_boost: finalSpeakerBoost
+          },
+          generation_config: {
+            chunk_length_schedule: [50],
+            stream_sequence_mode: false
+          },
+          output_format: "mp3_44100_128",
+          optimize_streaming_latency: 3,
+          return_full_audio: true,
+          detailed_metadata: true
+        }),
+        signal: abortController.signal
+      });
+      
+      if (initialResponse.ok) {
+        console.log('[TTS] Initial streaming request successful, getting history ID');
+        const initialData = await initialResponse.json();
+        const historyItemId = initialData.history_item_id;
+        
+        // Now send the text
+        const textResponse = await fetch(`${streamingUrl}/${historyItemId}/text`, {
+          method: 'POST',
+          headers: {
+            'xi-api-key': apiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: text,
+            try_trigger_generation: true
+          }),
+          signal: abortController.signal
+        });
+        
+        if (!textResponse.ok) {
+          console.warn('[TTS] Failed to send text to streaming endpoint, falling back to timestamps endpoint');
+        } else {
+          console.log('[TTS] Text sent successfully, waiting for generation to complete');
+          
+          // Give the API time to process the audio
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+          
+          // Now get the metadata
+          const metadataResponse = await fetch(`https://api.elevenlabs.io/v1/history/${historyItemId}/metadata/detailed`, {
+            method: 'GET',
+            headers: {
+              'xi-api-key': apiKey,
+              'Content-Type': 'application/json',
+            },
+            signal: abortController.signal
+          });
+          
+          if (metadataResponse.ok) {
+            console.log('[TTS] Successfully retrieved detailed metadata');
+            const detailedMetadata = await metadataResponse.json();
+            
+            // Get the audio
+            const audioResponse = await fetch(`https://api.elevenlabs.io/v1/history/${historyItemId}/audio`, {
+              method: 'GET',
+              headers: {
+                'xi-api-key': apiKey,
+              },
+              signal: abortController.signal
+            });
+            
+            if (audioResponse.ok) {
+              // Get audio data as arraybuffer
+              const audioData = await audioResponse.arrayBuffer();
+              
+              // Convert arraybuffer to base64
+              const audioBase64 = btoa(
+                new Uint8Array(audioData)
+                  .reduce((data, byte) => data + String.fromCharCode(byte), '')
+              );
+              
+              // Create and play the sound
+              console.log('[TTS] Creating sound object from detailed metadata response');
+              const { sound } = await Audio.Sound.createAsync(
+                { uri: `data:audio/mpeg;base64,${audioBase64}` },
+                { shouldPlay: true }
+              );
+              
+              // Store the sound globally for controls
+              currentSound = sound;
+              
+              // Set up playback status handler
+              sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+                if ('didJustFinish' in status && status.didJustFinish) {
+                  console.log('[TTS] Playback finished naturally');
+                  isProcessingTTS = false;
+                }
+              });
+              
+              // Process the detailed metadata into phoneme-level alignment
+              // This is what we'll use for lip-sync
+              const phonemeAlignment = processDetailedMetadata(detailedMetadata);
+              
+              console.log('[TTS] Sound created and playback started with phoneme-level timing data');
+              return { sound, alignmentData: phonemeAlignment };
+            }
+          }
+        }
+      }
+    }
+    
+    // Fallback to timestamps endpoint if detailed metadata failed
+    console.log('[TTS] Falling back to with-timestamps endpoint');
     
     // Use the correct timestamps endpoint
     const timestampsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voice}/with-timestamps`;
@@ -289,4 +413,44 @@ export const speakText = async (options: TTSOptions): Promise<{
     isProcessingTTS = false;
     throw error;
   }
-}; 
+};
+
+/**
+ * Process detailed metadata from ElevenLabs into phoneme alignment data for lip-sync
+ * @param metadata - Detailed metadata object from ElevenLabs API
+ * @returns Processed alignment data with phoneme timing
+ */
+function processDetailedMetadata(metadata: any): any {
+  if (!metadata || !metadata.character_info) {
+    console.warn('[TTS] No detailed character info in metadata');
+    return null;
+  }
+  
+  try {
+    const { character_info } = metadata;
+    
+    // Extract phoneme data
+    const phonemes = character_info.flat().map((charInfo: any) => {
+      return {
+        phoneme: charInfo.phoneme || '',
+        start_time: charInfo.start_time,
+        end_time: charInfo.end_time
+      };
+    }).filter((p: any) => p.phoneme && p.phoneme !== '');
+    
+    // Create character-level data for progressive text display
+    const characters = character_info.flat().map((charInfo: any) => charInfo.character || '');
+    const character_start_times_seconds = character_info.flat().map((charInfo: any) => charInfo.start_time);
+    
+    console.log(`[TTS] Processed ${phonemes.length} phonemes from detailed metadata`);
+    
+    return {
+      phonemes,
+      characters,
+      character_start_times_seconds
+    };
+  } catch (error) {
+    console.error('[TTS] Error processing detailed metadata:', error);
+    return null;
+  }
+} 

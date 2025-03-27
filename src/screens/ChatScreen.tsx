@@ -1031,7 +1031,7 @@ const ChatScreen: React.FC = () => {
               }
             ]}
           >
-            <ConversationList />
+            <ConversationList isCollapsed={isCollapsed} />
             {dimensions.width <= 768 && (
               <IconButton
                 icon="close"

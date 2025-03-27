@@ -1,0 +1,25 @@
+Place your mouth viseme images in this directory. These should contain ONLY the mouth shapes with transparent backgrounds.
+
+Required files:
+
+- rest.png   (Neutral mouth position)
+- a.png      ("ah" as in "father")
+- b.png      ("b", "m", "p" - closed lips)
+- c.png      ("ch", "j", "sh" sounds)
+- d.png      ("d", "t", "z" sounds)
+- e.png      ("e" as in "bed")
+- f.png      ("f", "v" sounds)
+- g.png      ("g", "k" sounds)
+- i.png      ("i" as in "sit")
+- o.png      ("o" as in "go")
+- u.png      ("u" as in "put")
+- th.png     ("th" sound)
+- wq.png     ("w", "q" sounds)
+
+Important:
+- Each image should contain ONLY the mouth shape with a transparent background
+- All images must be the same size as your base character image
+- The mouth position must align correctly when overlaid on your character
+- All files should be PNG format with transparency
+
+See the README.md in the parent directory for more details. 
